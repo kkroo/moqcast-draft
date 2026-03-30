@@ -91,7 +91,10 @@ This document specifies how MoQ integrates with IP multicast:
 
 This specification is container-format agnostic and works with
 MMT [I-D.ramadan-moq-mmt], CMAF [I-D.ietf-moq-cmsf], LOC
-[I-D.ietf-moq-loc], or any other MoQ packaging format.
+[I-D.ietf-moq-loc], or any other MoQ packaging format.  Multicast
+packet framing is specified by [I-D.ramadan-moq-fec]: condensed
+format for catalog-aware receivers (LOC/CMAF content), or MMTP for
+broadcast-compatible receivers.
 
 ## 2. Terminology
 
@@ -250,6 +253,25 @@ NOTE: For general consumer web applications, MoQ/WebTransport
 (Priority 3) is effectively the highest-priority available transport.
 IWA DirectSocket (Priorities 1-2) is limited to enterprise-managed
 Chrome and users who side-load the IWA [WICG-DirectSockets].
+
+When content is delivered via multicast (SSM or AMT), the packet
+framing depends on the media container and receiver capabilities:
+
+- **LOC or CMAF content**: Multicast packets use the condensed format
+  (Repair Container 0x02 per [I-D.ramadan-moq-fec]) when receivers
+  obtain the catalog via MoQ.  The condensed format carries per-packet
+  timestamp, sequence number, and keyframe flag plus catalog-driven
+  optional fields (FEC Payload ID, Object Length, Auth Tag) at roughly
+  one-third the overhead of MMTP.
+
+- **MMTP content**: Multicast packets use native MMTP headers (Repair
+  Container 0x01 per [I-D.ramadan-moq-fec]) for ISO 23008-1 /
+  ATSC 3.0 / ARIB STD-B60 compatibility.  MMTP headers are
+  self-describing and do not require a catalog.
+
+The multicast catalog extension (Section 7) is container-format
+agnostic.  The same endpoint configuration applies regardless of
+whether the multicast stream uses condensed or MMTP framing.
 
 ## 7. Multicast Catalog Extension
 
