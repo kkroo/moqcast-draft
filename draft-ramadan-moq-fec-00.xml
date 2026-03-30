@@ -25,11 +25,11 @@
       QUIC (MoQ).  It defines FEC configuration signaling, catalog extensions,
       repair track naming, repair object formats, and interleaving strategies.
       Supported FEC schemes are RaptorQ (RFC 6330), Reed-Solomon (RFC 5510),
-      and XOR.  A repair container abstraction allows repair objects to carry
-      native MoQ-framed symbols or container-specific payloads (e.g., MMTP),
-      enabling multi-path FEC where receivers apply identical recovery
-      regardless of transport path (MoQ/QUIC, SSM multicast, or ATSC 3.0
-      broadcast).</t>
+      and XOR.  A repair container abstraction allows repair objects to use
+      the condensed format (raw payloads for LOC/CMAF) or container-specific
+      payloads (e.g., MMTP), enabling multi-path FEC where receivers apply
+      identical recovery regardless of transport path (MoQ/QUIC, SSM
+      multicast, or ATSC 3.0 broadcast).</t>
     </abstract>
   </front>
 
@@ -171,9 +171,8 @@ FEC_CONFIG Message {
           <dd>Identifier per <xref target="sec-fec-algorithms"/>.</dd>
           <dt>Repair Container</dt>
           <dd>Format of repair payloads per <xref target="sec-repair-container"/>.
-          Default 0x00 is native MoQ (<xref target="sec-repair-format"/>);
-          0x01 is MMTP passthrough (<xref target="sec-mmtp-container"/>);
-          0x02 is condensed multicast format (<xref target="sec-condensed-format"/>).</dd>
+          Default 0x00 is condensed (<xref target="sec-repair-format"/>);
+          0x01 is MMTP passthrough (<xref target="sec-mmtp-container"/>).</dd>
           <dt>Source Symbols Per Block (K)</dt>
           <dd>Source symbols per FEC block.  MUST be &gt;= 1.</dd>
           <dt>Repair Symbols Per Block (P)</dt>
@@ -293,24 +292,26 @@ Reed-Solomon OTI {
             <tr><th>Value</th><th>Container</th><th>Reference</th></tr>
           </thead>
           <tbody>
-            <tr><td>0x00</td><td>Native MoQ (<xref target="sec-repair-format"/>)</td><td>This document</td></tr>
+            <tr><td>0x00</td><td>Condensed (<xref target="sec-repair-format"/>)</td><td>This document</td></tr>
             <tr><td>0x01</td><td>MMTP (<xref target="sec-mmtp-container"/>)</td><td>This document</td></tr>
-            <tr><td>0x02</td><td>Condensed (<xref target="sec-condensed-format"/>)</td><td>This document</td></tr>
-            <tr><td>0x03-0xFF</td><td>Reserved</td><td>IANA</td></tr>
+            <tr><td>0x02-0xFF</td><td>Reserved</td><td>IANA</td></tr>
           </tbody>
         </table>
 
-        <t>When 0x00, repair payloads use the native format (<xref target="sec-native-repair"/>).</t>
-        <t>When 0x01, repair payloads use MMTP format (<xref target="sec-mmtp-container"/>).</t>
-        <t>When 0x02 (Condensed), source and repair payloads on multicast use the condensed
-        packet format (<xref target="sec-condensed-format"/>).  This format is designed for
-        catalog-aware receivers on UDP multicast -- it carries only per-packet fields that
-        cannot be derived from the catalog, using the same field encodings as MoQ extension
-        headers (<xref target="sec-extensions"/>).  LOC and CMAF content SHOULD use container
-        0x02 for multicast delivery when the receiver has a MoQ catalog.  MMTP content uses
-        container 0x01 for ISO 23008-1 compatibility.</t>
+        <t>When 0x00 (Condensed, default), the transport determines how SBN/ESI
+        metadata is conveyed.  On MoQ unicast, SBN and ESI are derived from MoQ
+        framing (group_id, object_id) or carried in MoQ extension headers
+        (<xref target="sec-extensions"/>) -- repair payloads are raw symbols with no
+        additional header (<xref target="sec-native-repair"/>).  On multicast UDP, each
+        packet carries a condensed header with per-packet fields (Flags, Sequence Number,
+        and optional FEC Payload ID) that cannot be derived from the catalog
+        (<xref target="sec-condensed-format"/>).  LOC and CMAF content use container 0x00.</t>
 
-        <t>Receivers MUST support container 0x00.  Other containers are OPTIONAL.</t>
+        <t>When 0x01, repair payloads use MMTP format (<xref target="sec-mmtp-container"/>).
+        MMTP content uses container 0x01 for ISO 23008-1 / ATSC 3.0 broadcast
+        compatibility.</t>
+
+        <t>Receivers MUST support container 0x00.  Container 0x01 is OPTIONAL.</t>
       </section>
     </section>
 
@@ -353,12 +354,12 @@ Reed-Solomon OTI {
           <dt>interleaveDepth (integer, OPTIONAL)</dt>
           <dd>Media units per FEC block.  Default 1.</dd>
           <dt>repairContainer (string, OPTIONAL)</dt>
-          <dd>"native" (default), "condensed", or "mmtp".
+          <dd>"condensed" (default) or "mmtp".
           <ul>
-            <li>"native": Native MoQ format (<xref target="sec-native-repair"/>).
-            Default if omitted.  For MoQ/QUIC unicast.</li>
-            <li>"condensed": Condensed multicast format (<xref target="sec-condensed-format"/>).
-            For UDP multicast with catalog.</li>
+            <li>"condensed": Condensed format (<xref target="sec-repair-format"/>).
+            Default if omitted.  On MoQ unicast, SBN/ESI from MoQ framing or
+            extensions.  On multicast UDP, condensed packet header
+            (<xref target="sec-condensed-format"/>).</li>
             <li>"mmtp": MMTP repair packet passthrough (<xref target="sec-mmtp-container"/>).
             For ISO 23008-1 broadcast compatibility.</li>
           </ul></dd>
@@ -430,10 +431,10 @@ Reed-Solomon OTI {
       <name>Repair Object Format</name>
 
       <section anchor="sec-native-repair">
-        <name>Native MoQ Repair Format</name>
-        <t>This format applies when Repair Container is 0x00 (or catalog
-        "native"/omitted).  Each repair object contains exactly one repair
-        symbol with no additional header:</t>
+        <name>Condensed Repair Format (MoQ Unicast)</name>
+        <t>On MoQ unicast (Repair Container 0x00, or catalog "condensed"/omitted),
+        each repair object contains exactly one repair symbol with no additional
+        header -- SBN and ESI are derived from MoQ framing:</t>
 
         <artwork type="ascii-art"><![CDATA[
 Repair Object Payload {
@@ -468,8 +469,9 @@ ESI = K + object_id
 
       <section anchor="sec-condensed-format">
         <name>Condensed Multicast Format</name>
-        <t>This format applies when Repair Container is 0x02.  It is used for LOC and
-        CMAF content on UDP multicast when the receiver has a catalog.  Unlike MMTP
+        <t>This format applies when Repair Container is 0x00 (condensed) and data
+        is delivered over UDP multicast.  It is used for LOC and CMAF content
+        when the receiver has a catalog.  Unlike MMTP
         (<xref target="sec-mmtp-container"/>) which is self-describing, the condensed
         format relies on catalog metadata for FEC parameters and field presence.</t>
 
@@ -535,7 +537,7 @@ header_size = 5
         <t>Per-packet overhead comparison:</t>
         <table>
           <thead>
-            <tr><th>Content</th><th>Condensed (0x02)</th><th>MMTP (0x01)</th></tr>
+            <tr><th>Content</th><th>Condensed (0x00)</th><th>MMTP (0x01)</th></tr>
           </thead>
           <tbody>
             <tr><td>LOC source, FEC, no auth</td><td>5 bytes</td><td>32 bytes</td></tr>
@@ -760,7 +762,7 @@ Optional  Required     Required
 ]]></artwork>
 
         <t>For LOC and CMAF content, multicast delivery SHOULD use the condensed format
-        (Container 0x02) when receivers obtain the catalog via MoQ.  The condensed format
+        (Container 0x00) when receivers obtain the catalog via MoQ.  The condensed format
         provides the same per-packet metadata as MMTP at roughly one-third the overhead.
         MMTP (Container 0x01) is REQUIRED for broadcast-only deployments (ATSC 3.0,
         ARIB STD-B60) where receivers have no MoQ catalog.</t>
@@ -1025,10 +1027,9 @@ Converts to FEC_CONFIG:
             <tr><th>Value</th><th>Container</th><th>Reference</th></tr>
           </thead>
           <tbody>
-            <tr><td>0x00</td><td>Native MoQ</td><td>This document, <xref target="sec-repair-format"/></td></tr>
+            <tr><td>0x00</td><td>Condensed</td><td>This document, <xref target="sec-repair-format"/></td></tr>
             <tr><td>0x01</td><td>MMTP</td><td>This document, <xref target="sec-mmtp-container"/></td></tr>
-            <tr><td>0x02</td><td>Condensed</td><td>This document, <xref target="sec-condensed-format"/></td></tr>
-            <tr><td>0x03-0xFF</td><td>Unassigned</td><td/></tr>
+            <tr><td>0x02-0xFF</td><td>Unassigned</td><td/></tr>
           </tbody>
         </table>
       </section>
@@ -1315,10 +1316,10 @@ Publisher                              Subscriber
             <tr><th>Format</th><th>Overhead</th><th>Components</th></tr>
           </thead>
           <tbody>
-            <tr><td>Native (0x00), LOC source</td><td>0 bytes</td><td>SBN/ESI from MoQ coords</td></tr>
-            <tr><td>Native (0x00), LOC + auth</td><td>N bytes</td><td>Auth Tag only</td></tr>
-            <tr><td>Native (0x00), repair</td><td>0 bytes</td><td>Raw symbol, SBN/ESI derived</td></tr>
-            <tr><td>Native (0x00), repair + auth</td><td>N bytes</td><td>Symbol + Auth Tag</td></tr>
+            <tr><td>Condensed (0x00), LOC source</td><td>0 bytes</td><td>SBN/ESI from MoQ coords</td></tr>
+            <tr><td>Condensed (0x00), LOC + auth</td><td>N bytes</td><td>Auth Tag only</td></tr>
+            <tr><td>Condensed (0x00), repair</td><td>0 bytes</td><td>Raw symbol, SBN/ESI derived</td></tr>
+            <tr><td>Condensed (0x00), repair + auth</td><td>N bytes</td><td>Symbol + Auth Tag</td></tr>
             <tr><td>CMAF + FEC extensions</td><td>9-12 bytes</td><td>FEC PID (8) + Obj Length (1-4)</td></tr>
             <tr><td>CMAF + FEC + auth</td><td>9+N to 12+N</td><td>FEC PID + Obj Length + Auth</td></tr>
             <tr><td>MMTP (0x01)</td><td>33 bytes</td><td>MMTP Hdr (12) + FEC PID (9) + OTI (12)</td></tr>
@@ -1410,8 +1411,8 @@ Publisher                              Subscriber
           <tbody>
             <tr><td>ATSC 3.0 MMT (RF)</td><td>MMTP passthrough</td><td>mmtp (0x01)</td></tr>
             <tr><td>SSM + ATSC 3.0</td><td>MMTP passthrough</td><td>mmtp (0x01)</td></tr>
-            <tr><td>MoQ only</td><td>raptorq native</td><td>native (0x00)</td></tr>
-            <tr><td>ATSC 3.0 ROUTE (RF)</td><td>CMAF over MoQ</td><td>native (0x00)</td></tr>
+            <tr><td>MoQ only</td><td>raptorq condensed</td><td>condensed (0x00)</td></tr>
+            <tr><td>ATSC 3.0 ROUTE (RF)</td><td>CMAF over MoQ</td><td>condensed (0x00)</td></tr>
           </tbody>
         </table>
       </section>
@@ -1457,7 +1458,7 @@ offset 33:  Repair Symbol Data (T bytes) -> memcpy to decoder
 
       <section anchor="sec-mmtp-oti">
         <name>Per-Packet OTI</name>
-        <t>Unlike native format where OTI is signaled once via FEC_CONFIG, MMTP
+        <t>Unlike the condensed format where OTI is signaled once via FEC_CONFIG, MMTP
         carries OTI in every repair packet (12 bytes at offset 21).  This provides
         immediate OTI on mid-stream join and robustness to FEC_CONFIG loss.
         Overhead: ~720 bytes/s at typical rates (8 repair symbols/block, ~7.5

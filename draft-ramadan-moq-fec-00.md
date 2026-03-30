@@ -15,10 +15,11 @@ Abstract
    extensions, repair track naming, repair object formats, and
    interleaving strategies.  Supported FEC schemes are RaptorQ
    (RFC 6330), Reed-Solomon (RFC 5510), and XOR.  A repair container
-   abstraction allows repair objects to carry native MoQ-framed
-   symbols or container-specific payloads (e.g., MMTP), enabling
-   multi-path FEC where receivers apply identical recovery regardless
-   of transport path (MoQ/QUIC, SSM multicast, or ATSC 3.0 broadcast).
+   abstraction allows repair objects to use the condensed format
+   (raw payloads for LOC/CMAF) or container-specific payloads
+   (e.g., MMTP), enabling multi-path FEC where receivers apply
+   identical recovery regardless of transport path (MoQ/QUIC, SSM
+   multicast, or ATSC 3.0 broadcast).
 
 Status of This Memo
 
@@ -59,7 +60,7 @@ Table of Contents
        6.1.  Track Naming
        6.2.  Subscription Model
    7.  Repair Object Format
-       7.1.  Native MoQ Repair Format
+       7.1.  Condensed Repair Format (MoQ Unicast)
        7.2.  Condensed Multicast Format
        7.3.  Repair Symbol Generation
    8.  MoQ Extension Headers for FEC
@@ -217,8 +218,8 @@ FEC_CONFIG Message {
 **FEC Algorithm**: Identifier per Section 4.3.
 
 **Repair Container**: Format of repair payloads per Section 4.6.
-Default 0x00 is native MoQ (Section 7); 0x01 is MMTP passthrough
-(Appendix C); 0x02 is condensed multicast format (Section 7.2).
+Default 0x00 is condensed (Section 7); 0x01 is MMTP passthrough
+(Appendix C).
 
 **Source Symbols Per Block (K)**: Source symbols per FEC block.
 MUST be >= 1.
@@ -324,23 +325,23 @@ Reed-Solomon OTI {
 
 | Value | Container | Reference |
 |-------|-----------|-----------|
-| 0x00  | Native MoQ (Section 7) | This document |
+| 0x00  | Condensed (Section 7) | This document |
 | 0x01  | MMTP (Appendix C) | This document |
-| 0x02  | Condensed (Section 7.2) | This document |
-| 0x03-0xFF | Reserved | IANA |
+| 0x02-0xFF | Reserved | IANA |
 
-When 0x00, repair payloads use the native format (Section 7.1).
-When 0x01, repair payloads use MMTP format (Appendix C).
-When 0x02 (Condensed), source and repair payloads on multicast use the
-condensed packet format (Section 7.2).  This format is designed for
-catalog-aware receivers on UDP multicast -- it carries only per-packet
-fields that cannot be derived from the catalog, using the same field
-encodings as MoQ extension headers (Section 8).  LOC and CMAF content
-SHOULD use container 0x02 for multicast delivery when the receiver has
-a MoQ catalog.  MMTP content uses container 0x01 for ISO 23008-1
-compatibility.
+When 0x00 (Condensed, default), the transport determines how SBN/ESI
+metadata is conveyed.  On MoQ unicast, SBN and ESI are derived from
+MoQ framing (group_id, object_id) or carried in MoQ extension headers
+(Section 8) -- repair payloads are raw symbols with no additional
+header (Section 7.1).  On multicast UDP, each packet carries a
+condensed header with per-packet fields (Flags, Sequence Number, and
+optional FEC Payload ID) that cannot be derived from the catalog
+(Section 7.2).  LOC and CMAF content use container 0x00.
 
-Receivers MUST support container 0x00.  Other containers are OPTIONAL.
+When 0x01, repair payloads use MMTP format (Appendix C).  MMTP content
+uses container 0x01 for ISO 23008-1 / ATSC 3.0 broadcast compatibility.
+
+Receivers MUST support container 0x00.  Container 0x01 is OPTIONAL.
 
 ## 5. Catalog FEC Extension
 
@@ -379,12 +380,10 @@ track level:
 **interleaveDepth** (integer, OPTIONAL): Media units per FEC block.
 Default 1.
 
-**repairContainer** (string, OPTIONAL): "native" (default), "condensed",
-or "mmtp".
-  - "native": Native MoQ format (Section 7.1).  Default if omitted.
-    For MoQ/QUIC unicast.
-  - "condensed": Condensed multicast format (Section 7.2).  For UDP
-    multicast with catalog.
+**repairContainer** (string, OPTIONAL): "condensed" (default) or "mmtp".
+  - "condensed": Condensed format (Section 7).  Default if omitted.
+    On MoQ unicast, SBN/ESI from MoQ framing or extensions.  On
+    multicast UDP, condensed packet header (Section 7.2).
   - "mmtp": MMTP repair packet passthrough (Appendix C).  For
     ISO 23008-1 broadcast compatibility.
 
@@ -437,11 +436,11 @@ Subscribers MAY subscribe to repair tracks using out-of-band knowledge
 
 ## 7. Repair Object Format
 
-### 7.1. Native MoQ Repair Format
+### 7.1. Condensed Repair Format (MoQ Unicast)
 
-This format applies when Repair Container is 0x00 (or catalog
-"native"/omitted).  Each repair object contains exactly one repair
-symbol with no additional header:
+On MoQ unicast (Repair Container 0x00, or catalog "condensed"/omitted),
+each repair object contains exactly one repair symbol with no additional
+header -- SBN and ESI are derived from MoQ framing:
 
 ```
 Repair Object Payload {
@@ -476,10 +475,11 @@ handling.
 
 ### 7.2. Condensed Multicast Format
 
-This format applies when Repair Container is 0x02.  It is used for LOC
-and CMAF content on UDP multicast when the receiver has a catalog.
-Unlike MMTP (Appendix C) which is self-describing, the condensed format
-relies on catalog metadata for FEC parameters and field presence.
+This format applies when Repair Container is 0x00 (condensed) and data
+is delivered over UDP multicast.  It is used for LOC and CMAF content
+when the receiver has a catalog.  Unlike MMTP (Appendix C) which is
+self-describing, the condensed format relies on catalog metadata for
+FEC parameters and field presence.
 
 The condensed header applies to both source and repair packets.
 
@@ -541,7 +541,7 @@ The payload is container-specific:
 
 Per-packet overhead comparison:
 
-| Content | Condensed (0x02) | MMTP (0x01) |
+| Content | Condensed (0x00) | MMTP (0x01) |
 |---------|-----------------|-------------|
 | LOC source, FEC, no auth | 5 bytes | 32 bytes |
 | LOC source, FEC + auth | 5+N bytes | 32 bytes |
@@ -724,7 +724,7 @@ Optional  Required     Required
 ```
 
 For LOC and CMAF content, multicast delivery SHOULD use the condensed
-format (Container 0x02) when receivers obtain the catalog via MoQ.  The
+format (Container 0x00) when receivers obtain the catalog via MoQ.  The
 condensed format provides the same per-packet metadata as MMTP at
 roughly one-third the overhead.  MMTP (Container 0x01) is REQUIRED for
 broadcast-only deployments (ATSC 3.0, ARIB STD-B60) where receivers
@@ -937,10 +937,9 @@ Note: Provisional pending control message extension headers in
 
 | Value | Container | Reference |
 |-------|-----------|-----------|
-| 0x00  | Native MoQ | This document, Section 7 |
+| 0x00  | Condensed | This document, Section 7 |
 | 0x01  | MMTP | This document, Appendix C |
-| 0x02  | Condensed | This document, Section 7.2 |
-| 0x03-0xFF | Unassigned | |
+| 0x02-0xFF | Unassigned | |
 
 ### 16.5. MoQ Object Extension Header Types
 
@@ -1083,10 +1082,10 @@ objects 0,1,2.  With K=10, P=3:
 
 | Format | Overhead | Components |
 |--------|----------|------------|
-| Native (0x00), LOC source | 0 bytes | SBN/ESI from MoQ coords |
-| Native (0x00), LOC + auth | N bytes | Auth Tag only |
-| Native (0x00), repair | 0 bytes | Raw symbol, SBN/ESI derived |
-| Native (0x00), repair + auth | N bytes | Symbol + Auth Tag |
+| Condensed (0x00), LOC source | 0 bytes | SBN/ESI from MoQ coords |
+| Condensed (0x00), LOC + auth | N bytes | Auth Tag only |
+| Condensed (0x00), repair | 0 bytes | Raw symbol, SBN/ESI derived |
+| Condensed (0x00), repair + auth | N bytes | Symbol + Auth Tag |
 | CMAF + FEC extensions | 9-12 bytes | FEC PID (8) + Obj Length (1-4) |
 | CMAF + FEC + auth | 9+N to 12+N | FEC PID + Obj Length + Auth |
 | MMTP (0x01) | 33 bytes | MMTP Hdr (12) + FEC PID (9) + OTI (12) |
@@ -1169,8 +1168,8 @@ MMT mode).  Repair payloads are unmodified MMTP repair packets per
 |---|---|---|
 | ATSC 3.0 MMT (RF) | MMTP passthrough | mmtp (0x01) |
 | SSM + ATSC 3.0 | MMTP passthrough | mmtp (0x01) |
-| MoQ only | raptorq native | native (0x00) |
-| ATSC 3.0 ROUTE (RF) | CMAF over MoQ | native (0x00) |
+| MoQ only | raptorq condensed | condensed (0x00) |
+| ATSC 3.0 ROUTE (RF) | CMAF over MoQ | condensed (0x00) |
 
 ### C.2. Wire Format
 
@@ -1210,8 +1209,8 @@ K (source symbols per block) = ceil(F / T).
 
 ### C.4. Per-Packet OTI
 
-Unlike native format where OTI is signaled once via FEC_CONFIG, MMTP
-carries OTI in every repair packet (12 bytes at offset 21).  This
+Unlike the condensed format where OTI is signaled once via FEC_CONFIG,
+MMTP carries OTI in every repair packet (12 bytes at offset 21).  This
 provides immediate OTI on mid-stream join and robustness to
 FEC_CONFIG loss.  Overhead: ~720 bytes/s at typical rates (8 repair
 symbols/block, ~7.5 blocks/s at 30fps depth=4).
