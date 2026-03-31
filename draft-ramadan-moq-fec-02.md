@@ -424,13 +424,7 @@ objects ARE 1:1 with symbols (each object = one T-byte repair
 symbol), so the derivation is valid.
 
 Publishers MUST publish exactly one repair symbol per MoQ object.
-Bundling multiple repair symbols in a single object would create a
-single point of failure — losing that object loses all repair for
-the block, defeating the purpose of FEC.  Separate objects allow
-independent delivery, priority, and congestion handling per symbol.
-
-The number of repair symbols per block (P) is known from the catalog
-and does not need to be signaled per object.
+The number of repair symbols per block (P) is known from the catalog.
 
 ### 7.2. Repair Symbol Generation
 
@@ -461,12 +455,7 @@ ESI = K + object_id
 
 LOC repair objects MAY include an Auth Tag extension header
 [I-D.ietf-moq-loc] for per-symbol authentication.  No FEC-specific
-extension headers are needed — the LOC framing plus MoQ object
-coordinates provide all metadata required for FEC recovery.
-
-LOC repair is the natural pairing for LOC source tracks.  Both
-source and repair use the same LOC packaging, enabling receivers
-to apply a single LOC parser to both tracks.
+extension headers are needed.
 
 ### 7.4. Condensed Multicast Wire Format
 
@@ -580,19 +569,8 @@ MMTP tracks use MMTP-native authentication.  Condensed multicast
 packets carry auth via the Auth Length field (Section 7.4).
 
 The Auth Tag provides end-to-end content authentication across
-untrusted relays (e.g., ALTA).  MoQ transport security (TLS/QUIC)
-protects individual hops but does not protect content integrity
-across the full delivery chain — a compromised or malicious relay
-could modify object payloads before re-encrypting for the next hop.
-The Auth Tag extension enables receivers to verify that object
-content originated from the publisher, regardless of how many
-relay hops it traversed.
-
-Auth on repair objects is particularly important: a compromised
-relay could inject malicious repair symbols that cause receivers
-to reconstruct corrupted source data after FEC recovery.  When
-auth is enabled, receivers SHOULD verify repair object auth tags
-before feeding symbols to the FEC decoder.
+untrusted relays — receivers verify that content originated from
+the publisher regardless of relay hops (see Section 15).
 
 ## 9. Block and Group Alignment
 
@@ -668,14 +646,8 @@ Recommended priority assignment:
 | Source Media | 2-4 | Protected |
 | Repair Symbols | 6-7 | Dropped first |
 
-Publishers set priority via the QUIC stream priority mechanism or
-MoQ-specific priority signaling.
-
-Under congestion, this priority separation ensures:
-
-1. Source media is preserved as long as possible
-2. Repair overhead is gracefully shed
-3. Receivers degrade to QUIC retransmission when FEC is unavailable
+Under congestion, this separation ensures source media is preserved
+while repair overhead is gracefully shed.
 
 ## 12. Hybrid Unicast and Multicast Delivery
 
@@ -748,32 +720,9 @@ scenarios.
 This specification is designed to work alongside CMAF packaging for
 MoQ [I-D.ietf-moq-cmsf].  The relationship is:
 
-```
-+-----------------------------------------------------+
-|              MoQ Track Namespace                     |
-+-----------------------------------------------------+
-|                                                      |
-|  Source Track (CMAF packaged)                        |
-|  +---------------------------------------------+    |
-|  | Object 0: CMAF Header (ftyp, moov)          |    |
-|  | Object 1: CMAF Chunk (moof + mdat)          |    |
-|  | Object 2: CMAF Chunk (moof + mdat)          |    |
-|  | ...                                          |    |
-|  +---------------------------------------------+    |
-|                                                      |
-|  Repair Track (this specification)                   |
-|  +---------------------------------------------+    |
-|  | Object 0: Repair for Block 0                |    |
-|  | Object 1: Repair for Block 1                |    |
-|  | ...                                          |    |
-|  +---------------------------------------------+    |
-|                                                      |
-+-----------------------------------------------------+
-```
-
-FEC encoding is applied to CMAF chunk payloads, treating each chunk
-(or portion thereof) as source symbols.  The FEC layer is agnostic to
-the media container format.
+FEC encoding is applied to CMAF chunk payloads (moof+mdat), treating
+each chunk as source symbols.  The source track uses CMAF packaging;
+the repair track uses condensed packaging within the same namespace.
 
 ### 14.1. CARP Integration
 
@@ -979,31 +928,10 @@ confirmed.
 
 ### A.1. Catalog-Driven FEC
 
-```
-Publisher                              Subscriber
-    |                                       |
-    |  (Subscriber fetches catalog,         |
-    |   discovers fec fields on video track)|
-    |                                       |
-    |  SUBSCRIBE(sub_id=1, track=video)     |
-    |<--------------------------------------|
-    |                                       |
-    |  SUBSCRIBE_OK(sub_id=1)               |
-    |-------------------------------------->|
-    |                                       |
-    |  SUBSCRIBE(sub_id=2, track=video/repair)
-    |<--------------------------------------|
-    |                                       |
-    |  SUBSCRIBE_OK(sub_id=2)               |
-    |-------------------------------------->|
-    |                                       |
-    |  [Source objects, group=0, obj=0..31] |
-    |-------------------------------------->|
-    |                                       |
-    |  [Repair objects, group=0, obj=0..7]  |
-    |-------------------------------------->|
-    |                                       |
-```
+See Section 3 for the subscribe/publish message flow.  The subscriber
+fetches the catalog, discovers fec fields, subscribes to both source
+and repair tracks, then receives source objects (group=0, obj=0..K-1)
+followed by repair objects (group=0, obj=0..P-1).
 
 ### A.2. Recovery Example
 
@@ -1033,25 +961,16 @@ headers defined in Section 8.
 | MoQ Extensions (CMAF+FEC+auth) | 9+N - 12+N bytes | FEC PID + Object Length + Auth Tag |
 | MMTP (0x01) | 33 bytes | MMTP Header (12) + FEC Payload ID (9) + OTI (12) |
 
-For LOC source objects, FEC-specific overhead is zero — SBN and ESI
-are derived from group_id and object_id (Section 7.1).  However, if
-content authentication is enabled, the Auth Tag extension
-(Section 8.3) adds N bytes per object as a MoQ extension header.
-
-The MoQ Extensions format adds 9-12 bytes per CMAF source object:
-8 bytes for the FEC Payload ID extension (SBN+ESI) and 1-4 bytes
-for the Object Length extension (QUIC varint encoding — 1 byte for
-objects up to 63 bytes, 2 bytes up to 16383, 4 bytes up to ~1GB).
-At typical CMAF video rates (30fps, interleave depth 4, ~7.5
-objects/second), this is approximately 68-90 bytes/second.
-
-The MMTP format carries full per-packet OTI for self-describing
-operation and ATSC 3.0 compatibility.
+LOC and condensed formats derive SBN/ESI from MoQ coordinates (zero
+FEC overhead).  CMAF adds 9-12 bytes/object for explicit SBN/ESI and
+object length.  MMTP carries full per-packet OTI (33 bytes) for
+self-describing operation and ATSC 3.0 compatibility.
 
 ## Appendix B. Catalog Example
 
-Complete catalog with FEC and multicast configuration, showing all
-three packaging types with their corresponding repair tracks:
+Complete catalog with FEC, multicast, and multiple packaging types.
+Note: repair track packaging matches source packaging (mmtp/loc),
+except CMAF sources whose repair tracks use condensed packaging.
 
 ```json
 {
@@ -1062,84 +981,41 @@ three packaging types with their corresponding repair tracks:
       "name": "video",
       "packaging": "mmtp",
       "codec": "avc1.64001f",
-      "width": 1920,
-      "height": 1080,
-      "framerate": 30,
-      "bitrate": 5000000,
+      "width": 1920, "height": 1080, "framerate": 30, "bitrate": 5000000,
       "fec": {
         "algorithm": "raptorq",
-        "sourceSymbols": 32,
-        "repairSymbols": 8,
-        "symbolSize": 1312,
-        "interleaveDepth": 4,
+        "sourceSymbols": 32, "repairSymbols": 8,
+        "symbolSize": 1312, "interleaveDepth": 4,
         "repairTrack": "video/repair"
       }
     },
-    {
-      "name": "video/repair",
-      "packaging": "mmtp",
-      "priority": 7
-    },
-    {
-      "name": "video.loc",
-      "packaging": "loc",
-      "codec": "avc1.64001f",
-      "width": 1920,
-      "height": 1080,
-      "fec": {
-        "algorithm": "raptorq",
-        "sourceSymbols": 32,
-        "repairSymbols": 8,
-        "symbolSize": 1312,
-        "interleaveDepth": 4,
-        "repairTrack": "video.loc/repair"
-      }
-    },
-    {
-      "name": "video.loc/repair",
-      "packaging": "loc",
-      "priority": 7
-    },
+    { "name": "video/repair", "packaging": "mmtp", "priority": 7 },
     {
       "name": "video.cmaf",
       "packaging": "cmaf",
       "codec": "avc1.64001f",
-      "width": 1920,
-      "height": 1080,
+      "width": 1920, "height": 1080,
       "fec": {
         "algorithm": "raptorq",
-        "sourceSymbols": 32,
-        "repairSymbols": 8,
-        "symbolSize": 1312,
-        "interleaveDepth": 4,
+        "sourceSymbols": 32, "repairSymbols": 8,
+        "symbolSize": 1312, "interleaveDepth": 4,
         "repairTrack": "video.cmaf/repair"
       }
     },
-    {
-      "name": "video.cmaf/repair",
-      "packaging": "condensed",
-      "priority": 7
-    },
+    { "name": "video.cmaf/repair", "packaging": "condensed", "priority": 7 },
     {
       "name": "audio",
       "packaging": "mmtp",
       "codec": "mp4a.40.2",
-      "sampleRate": 48000,
-      "channelCount": 2,
-      "bitrate": 128000,
+      "sampleRate": 48000, "channelCount": 2, "bitrate": 128000,
       "fec": {
         "algorithm": "xor",
-        "sourceSymbols": 10,
-        "repairSymbols": 1,
+        "sourceSymbols": 10, "repairSymbols": 1,
         "symbolSize": 512,
         "repairTrack": "audio/repair"
       }
     },
-    {
-      "name": "audio/repair",
-      "packaging": "mmtp",
-      "priority": 7
-    }
+    { "name": "audio/repair", "packaging": "mmtp", "priority": 7 }
   ],
   "multicast": {
     "groupAddress": "232.1.1.50",
@@ -1148,11 +1024,6 @@ three packaging types with their corresponding repair tracks:
   }
 }
 ```
-
-The `multicast` field uses the simple format defined in
-[I-D.ramadan-moq-multicast] Section 7.1.  For multi-endpoint
-deployments, the extended format (Section 7.2) with `endpoints`
-array is also available.
 
 ## Appendix C. MMTP Repair Packaging (Informational)
 
