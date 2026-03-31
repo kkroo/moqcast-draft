@@ -610,42 +610,52 @@ optional authentication — all catalog-driven with no per-packet flags.
 Condensed Multicast Packet {
   Track ID (16),              // 2 bytes — audio/video routing
   Repair (8),                 // 1 byte — 0=source, 1=repair
-  Source Block Number (32),   // 4 bytes — SBN
-  Encoding Symbol ID (32),   // 4 bytes — ESI
+  Source Block Number (24),   // 3 bytes — SBN (wraps at ~16M blocks)
+  Encoding Symbol ID (8),    // 1 byte — ESI (max 255 symbols/block)
+  Auth Length (8),            // 1 byte — 0=no auth, else tag size
   Payload (..),               // Source chunk or repair symbol
-  [Auth Tag (N)],             // N bytes, present if catalog signals auth
+  [Auth Tag (Auth Length)],   // Variable-length (HMAC, ALTA, etc.)
 }
 ```
 
-**Track ID** (16 bits): Identifies the media track within the SSM group.
-  Assigned per-track by the publisher and signaled in the catalog.
-  Receivers use Track ID to route packets to the correct decoder
-  (e.g., video vs audio).  Analogous to MMTP packet_id.
+**Track ID** (16 bits): Identifies the media track within the SSM
+  group.  Assigned per-track by the publisher and signaled in the
+  catalog.  Receivers use Track ID to route packets to the correct
+  decoder (e.g., video vs audio).  Analogous to MMTP packet_id.
 
 **Repair** (8 bits): 0 for source packets, 1 for repair symbols.
   Receivers branch on this field to route source data to the media
-  decoder and repair data to the FEC recovery engine.  A full byte
-  (not a bit flag) avoids bit-packing overhead on the multicast hot
-  path.  The explicit flag is necessary because K may vary per block
-  (e.g., blocks spanning keyframes), making ESI >= K unreliable for
-  source/repair discrimination.
+  decoder and repair data to the FEC recovery engine.  The explicit
+  flag is necessary because K may vary per block (e.g., blocks
+  spanning keyframes), making ESI >= K unreliable for source/repair
+  discrimination.
 
-**SBN** (32 bits): Source Block Number.  Identifies the FEC block.
+**SBN** (24 bits): Source Block Number.  Identifies the FEC block.
+  Wraps at 16,777,216 — at 30fps with interleave depth 4 (~7.5
+  blocks/sec), this provides ~25 days before wraparound.
 
-**ESI** (32 bits): Encoding Symbol ID.  For source packets, ESI < K.
-  For repair packets, ESI >= K.
+**ESI** (8 bits): Encoding Symbol ID.  For source packets, ESI < K.
+  For repair packets, ESI >= K.  Maximum 255 symbols per block
+  (e.g., K=247 source + P=8 repair).
+
+**Auth Length** (8 bits): Length of the authentication tag in bytes.
+  0 if no authentication for this packet.  Maximum 255 bytes,
+  sufficient for HMAC-SHA256 (32), Ed25519 (64), and ALTA
+  [I-D.krose-mboned-alta] variable-length tags (chained MACs +
+  optional signature).  The per-packet length field is necessary
+  because schemes like ALTA produce variable-size tags depending
+  on MAC chain depth and signature presence.
 
 **Payload**: Source chunk data (CMAF moof+mdat fragment or portion
   thereof) or repair symbol (Symbol Size bytes from FEC encoding).
 
-**Auth Tag** (N bytes): Per-packet authentication tag.  Present when
-  the catalog signals an authentication scheme.  Tag size N is fixed
-  per stream and declared in the catalog.  Receivers know whether to
-  read the auth tag and its size from catalog — no per-packet flag
-  needed.
+**Auth Tag** (Auth Length bytes): Authentication tag.  Present when
+  Auth Length > 0.  Format is scheme-specific (HMAC, ALTA, etc.)
+  as declared in the catalog.
 
-Fixed overhead: 11 bytes.  Compare to MMTP repair (33 bytes) and
-LOC with extensions (~14+ bytes).
+Fixed overhead: 8 bytes.  Compare to MMTP repair (33 bytes) and
+LOC with extensions (~14+ bytes).  The 4x reduction in per-packet
+overhead is significant for high-rate multicast streams.
 
 On the MoQ unicast path, condensed packaging uses the headerless
 format (Section 7.1) with SBN/ESI derived from MoQ transport framing.

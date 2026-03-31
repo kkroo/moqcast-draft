@@ -592,12 +592,13 @@ CMAF content.  Each UDP datagram carries one condensed packet:
 
 ```
 Condensed Multicast Packet {
-  Track ID (16),              // audio/video routing
-  Repair (8),                 // 0=source, 1=repair
-  Source Block Number (32),   // SBN
-  Encoding Symbol ID (32),   // ESI
+  Track ID (16),              // 2 bytes — audio/video routing
+  Repair (8),                 // 1 byte — 0=source, 1=repair
+  Source Block Number (24),   // 3 bytes — SBN
+  Encoding Symbol ID (8),    // 1 byte — ESI (max 255/block)
+  Auth Length (8),            // 1 byte — 0=no auth
   Payload (..),               // source chunk or repair symbol
-  [Auth Tag (N)],             // if catalog signals auth
+  [Auth Tag (Auth Length)],   // variable-length auth tag
 }
 ```
 
@@ -609,17 +610,18 @@ Condensed Multicast Packet {
   K varies per block (e.g., blocks spanning keyframes), making
   ESI >= K unreliable for source/repair discrimination.
 
-**SBN/ESI** (32+32 bits): Always present.  CMAF chunks are
-  variable-size and don't map 1:1 to FEC source symbols, so
-  explicit SBN+ESI is mandatory (unlike LOC where it's derivable
-  from MoQ framing).
+**SBN** (24 bits): Source Block Number.  Wraps at ~16M blocks
+  (~25 days at 30fps with interleave depth 4).
 
-**Auth Tag** (N bytes): Present when the catalog declares an auth
-  scheme.  Tag size N is fixed per stream.  No per-packet flag —
-  presence is catalog-driven.
+**ESI** (8 bits): Encoding Symbol ID.  Max 255 symbols per block.
 
-Fixed overhead: 11 bytes.  Compared to MMTP (33 bytes for repair
-with FEC Payload ID + OTI) this is 3x more compact.
+**Auth Length** (8 bits): Length of auth tag.  0 = no auth.
+  Supports fixed-size (HMAC) and variable-size (ALTA) schemes.
+
+**Auth Tag**: Present when Auth Length > 0.  Scheme-specific format.
+
+Fixed overhead: 8 bytes.  Compared to MMTP (33 bytes for repair
+with FEC Payload ID + OTI) this is 4x more compact.
 
 On the MoQ unicast path, condensed packaging uses the headerless
 format defined in [I-D.ramadan-moq-fec] Section 7.1 with SBN/ESI
