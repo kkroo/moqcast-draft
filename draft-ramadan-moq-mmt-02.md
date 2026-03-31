@@ -37,6 +37,7 @@ Table of Contents
        4.1.  Track Structure
        4.2.  Object Payload
        4.3.  Group Boundaries
+       4.4.  Unified Ordering Model
    5.  Media Fragment Unit (MFU) Mode
        5.1.  MFU Fragmentation
    6.  FEC Integration
@@ -44,18 +45,13 @@ Table of Contents
        6.2.  OTI Signaling
    7.  Multicast Integration
    8.  ARIB STD-B60 Compatibility
-       8.1.  Clock Reference
-       8.2.  Hybridcast Integration
-       8.3.  Typical FEC Parameters
-   9.  Transport Hierarchy
-   10. Catalog Signaling
-       10.1. Packaging Registration
-       10.2. Multicast Endpoint Catalog Extension
-   11. Security Considerations
-       11.1. Multicast Security
-   12. IANA Considerations
-   13. References
-   Appendix A. Bandwidth Comparison
+   9.  Catalog Signaling
+       9.1.  Packaging Registration
+       9.2.  Multicast Endpoint Catalog Extension
+   10. Security Considerations
+       10.1. Multicast Security
+   11. IANA Considerations
+   12. References
    Authors' Addresses
 ```
 
@@ -243,22 +239,9 @@ Group boundaries align with MPU boundaries:
 
 ### 4.4. Unified Ordering Model
 
-The MPU Sequence Number serves as the single authoritative ordering
-key across all subsystems.  This design ensures consistency between
-media decode, FEC recovery, and MoQ transport:
-
-```
-MPU Sequence Number (mpuSeq)
-  │
-  ├── MoQ Group ID        (§4.1: mpuSeq → Group ID)
-  │     └── Decode order   — H.264/H.265 requires frames in sequence
-  │
-  ├── FEC Source Block     (SBN = mpuSeq / K, per [I-D.ramadan-moq-fec])
-  │     └── ESI alignment  — source symbols map to sequential mpuSeqs
-  │
-  └── MMTP Timestamp       (§3.1: wallclock presentation time)
-        └── Presentation    — monotonic within decode order
-```
+The MPU Sequence Number (mpuSeq) maps to MoQ Group ID (Section 4.1)
+and serves as the single authoritative ordering key across media
+decode, FEC recovery, and MoQ transport.
 
 Receivers MUST track the last decoded mpuSeq and:
 - **Keyframes (RAP=1)**: Always decode; reset decode-order tracking
@@ -266,29 +249,8 @@ Receivers MUST track the last decoded mpuSeq and:
   drop out-of-order delta frames to prevent reference frame mismatch
 - **FEC repair**: Use mpuSeq to derive SBN for block alignment
 
-This ordering model applies identically across delivery paths:
-- MoQ unicast (QUIC streams, per-group delivery)
-- SSM multicast (UDP, per-packet delivery)
-- ATSC 3.0 broadcast (ROUTE/MMTP, per-packet delivery)
-
-The decoder MUST enforce mpuSeq ordering regardless of delivery path.
-While MoQ per-group delivery naturally provides ordered groups,
-multicast and flat-stream delivery may reorder MFUs due to:
-- FEC interleaving (interleave depth > 1 causes block-level reordering)
-- Network path reordering (UDP provides no ordering guarantee)
-- CDN relay buffering (objects from different groups may interleave)
-
-Receivers SHOULD NOT rely on the transport layer for decode ordering.
-The decoder is the correct enforcement point because different
-delivery paths (MoQ groups, multicast, broadcast) have different
-ordering guarantees, but the decode requirement is the same.
-
-Implementation note: Fragment reassembly (handling FI=1,2,3 within
-a single MFU) and decode ordering (enforcing mpuSeq between MFUs)
-are separate concerns.  The reassembler buffers and reorders fragments
-by fragment counter; the decoder tracks lastDecodedMpuSeq and drops
-out-of-order delta frames.  This separation avoids cross-layer
-coupling between the container parser and the media decoder.
+This ordering model applies identically across MoQ unicast, SSM
+multicast, and ATSC 3.0 broadcast delivery paths.
 
 ## 5. Media Fragment Unit (MFU) Mode
 
@@ -363,6 +325,10 @@ and OTI from the standard MMTP FEC Payload ID fields.  See
 [I-D.ramadan-moq-fec] Appendix C for the byte-offset extraction
 recipe.
 
+Note: AL-FEC is essential on SSM/AMT multicast paths where there is
+no retransmission.  On MoQ/QUIC paths, FEC reduces retransmission
+latency but QUIC provides a reliable fallback.
+
 ### 6.1. Interleaving
 
 MMT AL-FEC interleaves source symbols across multiple MFUs:
@@ -381,31 +347,14 @@ Default interleave depth varies by application:
 
 ### 6.2. OTI Signaling
 
-The S-TSID table contains RaptorQ OTI (Object Transmission Info):
-
-```
-S-TSID {
-  source_filter (S,G address),
-  fec_oti {
-    transfer_length (40 bits),
-    symbol_size (16 bits),
-    num_source_blocks (8 bits),
-    num_sub_blocks (16 bits),
-    alignment (8 bits),
-  }
-}
-```
-
 For MoQ, FEC parameters including OTI are signaled via catalog per
 [I-D.ramadan-moq-fec] Section 5.
 
 ## 7. Multicast Integration
 
 MMT content can be delivered via IP multicast (SSM, AMT) and TreeDN
-for scalable distribution.  Platform-specific delivery paths, SSM
-group allocation, TreeDN integration with ISP router AMT deployment,
-DePIN incentives, and IWA home gateway architecture are defined in
-[I-D.ramadan-moq-multicast].
+for scalable distribution.  Delivery paths, SSM group allocation,
+and transport hierarchy are defined in [I-D.ramadan-moq-multicast].
 
 When MMT is delivered over multicast, MMTP packets are transmitted
 as UDP datagrams with the standard MMTP header intact.  MoQ relays
@@ -419,9 +368,7 @@ native delivery path and requires no protocol translation.
 
 ARIB STD-B60 (Japan's MMT-based broadcasting standard) uses the
 same ISO 23008-1 foundation as ATSC 3.0 with the following specific
-considerations:
-
-### 8.1. Clock Reference
+considerations for clock reference mapping.
 
 ARIB STD-B60 uses UTC wallclock timestamps in NTP short format,
 consistent with ISO 23008-1.  The MMTP Timestamp field carries the
@@ -437,58 +384,12 @@ MoQ Timestamp (seconds) = MMTP Timestamp upper 16 bits
 
 Note: This differs from MPEG-2 TS, which uses a 90kHz PTS/DTS clock.
 
-### 8.2. Hybridcast Integration
-
-ARIB defines Hybridcast for companion device synchronization
-(second screen experiences).  When bridging Hybridcast services:
-
-1. Include timeline alignment metadata in MoQ catalog
-2. Preserve MMT Composition Timeline (CT) information
-3. Signal synchronization points via MoQ object timestamps
-
-Catalog extension for Hybridcast:
-```json
-{
-  "hybridcast": {
-    "timelineId": "urn:isdb:timeline:ct",
-    "ptsOffset": 0,
-    "syncToleranceMs": 100
-  }
-}
-```
-
-### 8.3. Typical FEC Parameters
-
-ARIB STD-B60 deployments typically use more conservative FEC
-parameters than ATSC 3.0:
-
-| Parameter | ARIB STD-B60 Typical | ATSC 3.0 Typical |
-|-----------|-----------------|------------------|
-| K (source symbols) | 64 | 32 |
-| Interleave depth | 60 frames | 30 frames |
-| Symbol size | 1316 bytes | 1312 bytes |
-| Overhead | 20-30% | 25% |
-
-Publishers SHOULD preserve original FEC parameters when ingesting
-ARIB STD-B60 content.
-
-## 9. Transport Hierarchy
-
-Clients SHOULD attempt transports in preference order.  The transport
-hierarchy for native clients (TV, mobile) and browser clients is
-defined in [I-D.ramadan-moq-multicast] Section 6.
-
-For MMT-specific deployments, AL-FEC (Section 6) is essential on
-SSM/AMT paths since there is no retransmission.  On MoQ/QUIC paths,
-FEC reduces retransmission latency but QUIC provides a reliable
-fallback.
-
-## 10. Catalog Signaling
+## 9. Catalog Signaling
 
 The MoQ catalog signals MMT packaging via the standard CMSF
 `packaging` field [I-D.ietf-moq-catalogformat].
 
-### 10.1. Packaging Registration
+### 9.1. Packaging Registration
 
 This document registers "mmtp" as a MoQ Streaming Format packaging
 value:
@@ -526,30 +427,29 @@ types (mmtp, loc, cmaf), each is a separate track in the catalog.
 The subscriber chooses which packaging to subscribe to based on
 its capabilities.
 
-### 10.2. Multicast Endpoint Catalog Extension
+### 9.2. Multicast Endpoint Catalog Extension
 
-The multicast catalog extension — including simple and extended
-formats and format detection rules — is defined in
-[I-D.ramadan-moq-multicast] Section 7.
+The multicast catalog extension — including endpoint format — is
+defined in [I-D.ramadan-moq-multicast] Section 7.
 
 When ATSC 3.0 content is ingested into MoQ, the `multicast` field
 in the catalog SHOULD conform to the format defined in
 [I-D.ramadan-moq-multicast] Section 7.
 
-## 11. Security Considerations
+## 10. Security Considerations
 
 MMT content protection uses Common Encryption (CENC) which is
 preserved through MoQ transport.  The MMTP header is not encrypted,
 allowing relays to inspect packet type and sequence without
 accessing media content.
 
-### 11.1. Multicast Security
+### 10.1. Multicast Security
 
 Multicast-specific security considerations (source authentication,
 replay protection, AMT relay trust) are defined in
 [I-D.ramadan-moq-multicast] Section 8.
 
-## 12. IANA Considerations
+## 11. IANA Considerations
 
 This document requests registration of a MoQ Streaming Format
 packaging value in the registry established by
@@ -559,7 +459,7 @@ packaging value in the registry established by
 |-----------|-------------|-----------|
 | "mmtp" | MMTP-encapsulated media per ISO 23008-1 | This document |
 
-## 13. References
+## 12. References
 
 [RFC2119]
     Bradner, S., "Key words for use in RFCs to Indicate
@@ -612,55 +512,10 @@ packaging value in the registry established by
     for Media over QUIC", draft-ramadan-moq-multicast
     (work in progress).
 
-## Appendix A. Bandwidth Comparison
-
-FEC signaling bandwidth overhead:
-
-### A.1. Per-Session Overhead (One-Time)
-
-| Method | Size | When Sent |
-|--------|------|-----------|
-| Catalog JSON FEC | ~100 bytes | Catalog fetch |
-| MMTP AL-FEC (0x0203) | ~42 bytes | First signaling packet |
-
-### A.2. Per-Object Overhead (Recurring)
-
-| Method | Size | Frequency |
-|--------|------|-----------|
-| LOC Extension | 8 bytes | Every object |
-| MoQ Extensions (CMAF+FEC) | ~10-12 bytes | Every CMAF source object |
-| MMTP Header | 12 bytes | Every packet |
-
-Note: The MoQ Extensions row accounts for FEC PID extension (8 bytes)
-+ Object Length extension (1-4 bytes varint).  LOC source objects need
-zero additional extensions for FEC — SBN and ESI are derived from MoQ
-group_id and object_id.
-
-### A.3. Total Overhead Analysis
-
-For a 30fps stream with k=32 source symbols per FEC block:
-
-| Method | Overhead/second | Overhead/hour |
-|--------|-----------------|---------------|
-| Catalog JSON FEC | ~0.003 KB | ~0.01 KB |
-| LOC Extension | ~0.24 KB | ~0.86 MB |
-| MMTP (source only) | ~0.36 KB | ~1.3 MB |
-| MMTP + Repair | ~0.50 KB | ~1.8 MB |
-
-Catalog FEC fields have the lowest per-session overhead and zero
-per-object overhead, making them ideal for unicast MoQ.
-
-MMTP AL-FEC signaling has higher initial overhead but
-works without bidirectional signaling (multicast).
-
-### A.4. Recommendations
-
-| Use Case | Recommended Method |
-|----------|-------------------|
-| MoQ Unicast | Catalog FEC fields |
-| SSM Multicast | MMTP AL-FEC |
-| Adaptive FEC | Catalog FEC fields + catalog updates |
-| Hybrid (MoQ + SSM) | Both (MMTP in-band, catalog for unicast) |
+[I-D.ietf-moq-catalogformat]
+    Curley, L., et al., "Common Media Server Format for
+    Media over QUIC", draft-ietf-moq-catalogformat
+    (work in progress).
 
 ## Authors' Addresses
 
