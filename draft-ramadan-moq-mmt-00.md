@@ -3,7 +3,7 @@
 ```
 Internet-Draft                                              O. Ramadan
 Intended status: Standards Track                             Blockcast
-Expires: January 2027                                       July 2026
+Expires: October 2026                                      April 2026
 
         MPEG Media Transport (MMT) Packaging for Media over QUIC
                       draft-ramadan-moq-mmt-00

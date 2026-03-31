@@ -3,7 +3,7 @@
 ```
 Internet-Draft                                              O. Ramadan
 Intended status: Standards Track                             Blockcast
-Expires: January 2027                                       July 2026
+Expires: October 2026                                      April 2026
 
      Multicast Delivery and Endpoint Discovery for Media over QUIC
                     draft-ramadan-moq-multicast-00
