@@ -78,7 +78,6 @@ Table of Contents
        12.2. Multi-Path FEC Delivery
    13. ATSC 3.0 Compatibility
    14. Interaction with CMAF Packaging
-       14.1. CARP Integration
    15. Security Considerations
        15.1. FEC Does Not Provide Confidentiality
        15.2. Repair Symbol Manipulation
@@ -355,8 +354,7 @@ Examples:
 | ["broadcast", "video", "1080p"] | ["broadcast", "video", "1080p", "repair"] |
 | ["stream", "audio", "en"] | ["stream", "audio", "en", "repair"] |
 
-This convention allows subscribers to discover repair tracks without
-additional signaling.
+This convention provides a predictable default. The catalog `repairTrack` field (Section 5.1) is authoritative; publishers MAY use different names.
 
 ### 6.2. Subscription Model
 
@@ -495,6 +493,10 @@ Condensed Multicast Packet {
 **Auth Tag** (Auth Length bytes): Scheme-specific tag (HMAC, ALTA, etc.) as declared in catalog.
 
 Fixed overhead: 8 bytes (vs MMTP 33 bytes, LOC ~14+ bytes).
+
+Limitation: The 8-bit ESI field limits blocks to 255 symbols (e.g., K=247 source + P=8 repair). For broadcast deployments requiring larger blocks (K>247), the MMTP repair format (Appendix C) or LOC repair format (Section 7.3) SHOULD be used instead.
+
+The 24-bit SBN wraps at 16,777,216 blocks. At 60fps with interleave depth 1, this wraps in ~3.2 days. At 30fps with depth 4, ~25 days. Publishers SHOULD reset SBN on stream restart.
 
 On the MoQ unicast path, condensed packaging uses the headerless
 format (Section 7.1) with SBN/ESI derived from MoQ transport framing.
@@ -653,9 +655,8 @@ while repair overhead is gracefully shed.
 
 This FEC mechanism is designed to support hybrid delivery architectures
 where the same media stream is delivered via multiple transport paths
-simultaneously.  Multicast delivery paths (Section 3), TreeDN
-integration (Section 5), and transport hierarchy (Section 6) are
-defined in [I-D.ramadan-moq-multicast]; this section covers
+simultaneously.  Multicast delivery paths and endpoint discovery are defined in
+[I-D.ramadan-moq-multicast]; this section covers
 FEC-specific considerations for hybrid delivery.
 
 ### 12.1. Multicast and AMT Delivery
@@ -668,11 +669,8 @@ to recover from packet loss without retransmission:
 - **Native SSM**: Receivers join multicast group directly
 - **AMT Tunneling**: Receivers without native multicast connect via AMT
   relays discovered through DRIAD ([RFC8777])
-- **TreeDN Distribution**: Hierarchical multicast trees per [RFC9706]
-  with FEC protection at each hop.  ISP edge routers with inline AMT
-  relay capability [JUNIPER-TREEDN] can serve as TreeDN nodes,
-  replacing x86 CDN servers with in-router replication while
-  preserving FEC repair across the delivery path
+- **TreeDN Distribution**: TreeDN [RFC9706] nodes with FEC protection
+  at each hop
 
 The same MoQ objects (source and repair) can be transmitted over both
 unicast (QUIC/WebTransport) and multicast (UDP/SSM/AMT) paths.  Receivers
@@ -723,20 +721,6 @@ MoQ [I-D.ietf-moq-cmsf].  The relationship is:
 FEC encoding is applied to CMAF chunk payloads (moof+mdat), treating
 each chunk as source symbols.  The source track uses CMAF packaging;
 the repair track uses condensed packaging within the same namespace.
-
-### 14.1. CARP Integration
-
-The CMAF-Aware Real-time Protocol (CARP) [I-D.law-moq-carp] uses
-the same FEC catalog fields (Section 5.1) and multicast endpoint
-format ([I-D.ramadan-moq-multicast] Section 7) as any other MoQ
-packaging format.  No CARP-specific FEC signaling is needed — CARP
-catalogs include the `fec` and `multicast` objects defined in this
-document and [I-D.ramadan-moq-multicast] respectively.
-
-CMAF source objects with FEC enabled MUST carry the FEC Payload ID
-and Object Length extension headers (Section 8.1, 8.2).  CARP
-receivers use these extensions identically to non-CARP CMAF
-receivers.
 
 ## 15. Security Considerations
 
@@ -918,12 +902,6 @@ confirmed.
            media delivery in heterogeneous environments - Part 1:
            MPEG media transport (MMT)", ISO/IEC 23008-1:2023.
 
-[JUNIPER-TREEDN]
-           Giuliano, L., "TreeDN - The Fix for Catastrophically
-           Successful Live Streaming Events", Juniper TechPost,
-           August 2025, https://community.juniper.net/blogs/lenny/
-           2025/08/21/introduction-to-TreeDN
-
 ## Appendix A. Example Message Flows
 
 ### A.1. Catalog-Driven FEC
@@ -1018,9 +996,12 @@ except CMAF sources whose repair tracks use condensed packaging.
     { "name": "audio/repair", "packaging": "mmtp", "priority": 7 }
   ],
   "multicast": {
-    "groupAddress": "232.1.1.50",
-    "port": 5000,
-    "sourceAddress": "192.168.1.100"
+    "endpoints": [{
+      "sourceAddress": "192.168.1.100",
+      "groupAddress": "232.1.1.50",
+      "port": 5000,
+      "tracks": ["video", "video/repair", "video.cmaf", "video.cmaf/repair", "audio", "audio/repair"]
+    }]
   }
 }
 ```

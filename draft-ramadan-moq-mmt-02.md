@@ -38,6 +38,7 @@ Table of Contents
        4.2.  Object Payload
        4.3.  Group Boundaries
        4.4.  Unified Ordering Model
+       4.5.  Signaling Messages
    5.  Media Fragment Unit (MFU) Mode
        5.1.  MFU Fragmentation
    6.  FEC Integration
@@ -201,6 +202,8 @@ An MMT stream maps to MoQ tracks as follows:
 | MFU sequence | Object ID |
 | AL-FEC repair | Track "video/repair" |
 
+For ATSC 3.0 ingest, the gateway preserves the original packet_id assignments from the MPT (MMT Package Table). For MoQ-originated content using MMTP packaging, publishers assign packet_id values sequentially starting from 0 (video=0, audio=1, etc.) and signal the mapping in the catalog.
+
 ### 4.2. Object Payload
 
 Each MoQ object carries one MMTP packet:
@@ -251,6 +254,16 @@ Receivers MUST track the last decoded mpuSeq and:
 
 This ordering model applies identically across MoQ unicast, SSM
 multicast, and ATSC 3.0 broadcast delivery paths.
+
+### 4.5. Signaling Messages
+
+ATSC 3.0 MMTP streams carry signaling messages (PA, MPI, clock reference) in addition to media payloads. When ingesting ATSC 3.0 content:
+
+- **PA (Package Access) messages**: Publishers SHOULD publish PA messages as MoQ objects on a dedicated signaling track (e.g., "signaling") to enable subscriber-side asset discovery.
+- **MPI (MMT Presentation Information)**: Publishers MAY include MPI data in the catalog or as signaling track objects.
+- **Clock references**: Mapped to MoQ object timestamps per Section 8.
+
+Signaling messages that are only relevant to the broadcast transport layer (e.g., IP-level configuration) SHOULD NOT be forwarded to MoQ subscribers.
 
 ## 5. Media Fragment Unit (MFU) Mode
 

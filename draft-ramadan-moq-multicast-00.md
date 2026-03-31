@@ -52,9 +52,6 @@ Table of Contents
              5.2.2.  ATSC 3.0 (Broadcast Television)
              5.2.3.  Multiple Network Sources
    6.  Multicast Packet Formats
-       6.1.  MMTP Multicast
-       6.2.  LOC Multicast
-       6.3.  Condensed Multicast
    7.  Security Considerations
        7.1.  Multicast Security
    8.  IANA Considerations
@@ -160,7 +157,8 @@ one-element array:
       "sourceAddress": "69.25.95.10",
       "groupAddress": "232.0.10.1",
       "port": 8000,
-      "tracks": ["video", "video/repair", "audio"]
+      "tracks": ["video", "video/repair", "audio"],
+      "bandwidth": 6500000
     }]
   }
 }
@@ -216,6 +214,8 @@ Endpoint field definitions:
   Track names correspond to the track identifiers used in the MoQ
   catalog renditions.
 
+**bandwidth** (integer, OPTIONAL): Aggregate bandwidth of this endpoint in bits per second. Subscribers SHOULD check available network capacity before joining high-bandwidth multicast groups.
+
 **networkSource** (object or array, OPTIONAL): Network delivery
   configuration describing how subscribers can reach the multicast
   stream when native IP multicast routing is not available.  May
@@ -228,6 +228,8 @@ available (IWA DirectSocket, native UDP sockets, AMT tunneling).
 This enables a seamless upgrade path: subscribers first connect via
 MoQ/QUIC to receive the catalog and media, then optionally switch
 to multicast for lower-latency, FEC-protected delivery.
+
+During multicast join (which may take 1-3 seconds for IGMP/MLD), subscribers SHOULD continue receiving via MoQ/QUIC. Once multicast data arrives, subscribers switch to the multicast path. This dual-path startup avoids join latency gaps.
 
 ### 5.2. Network Source Types
 
@@ -267,6 +269,8 @@ Subscribers SHOULD attempt relay discovery in this order:
    "driad" or omitted
 3. Fall back to MoQ/QUIC unicast
 
+Note: DRIAD requires the SSM source IP to have a reverse DNS delegation with TYPE260 records. Publishers using cloud-hosted sources that lack reverse DNS control SHOULD provide the `relay` field as a direct fallback.
+
 #### 5.2.2. ATSC 3.0 (Broadcast Television)
 
 ```json
@@ -294,6 +298,8 @@ tuner hardware (USB dongles, built-in tuners, or NextGen TV
 sets) can receive the stream directly over RF without Internet
 connectivity.
 
+Note: These tuning parameters are intended for receivers with ATSC 3.0 tuner hardware. MoQ subscribers without tuner hardware ignore this networkSource type and use AMT or MoQ/QUIC instead.
+
 #### 5.2.3. Multiple Network Sources
 
 When a stream is available via multiple delivery technologies,
@@ -313,26 +319,7 @@ transport hierarchy defined in Section 4.
 
 ## 6. Multicast Packet Formats
 
-Each MoQ packaging type defines its own multicast UDP wire format.
-The catalog's `packaging` field tells receivers which parser to use.
-
-### 6.1. MMTP Multicast
-
-MMTP packets are transmitted as UDP datagrams per
-[I-D.ramadan-moq-mmt].  The MMTP header provides packet_id for
-track routing, FEC type for source/repair discrimination, and NTP
-timestamps.
-
-### 6.2. LOC Multicast
-
-LOC objects are transmitted with LOC headers per
-[I-D.ietf-moq-loc].  FEC Payload ID and auth tags are carried via
-LOC extension headers.
-
-### 6.3. Condensed Multicast
-
-Condensed packets use the wire format defined in
-[I-D.ramadan-moq-fec] Section 7.4 with 8 bytes fixed overhead.
+Each MoQ packaging type defines its own multicast UDP wire format. The catalog's `packaging` field tells receivers which parser to use: MMTP packets per [I-D.ramadan-moq-mmt], LOC objects per [I-D.ietf-moq-loc], or condensed packets per [I-D.ramadan-moq-fec] Section 7.4.
 
 ## 7. Security Considerations
 
