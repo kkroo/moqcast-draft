@@ -15,10 +15,9 @@ Abstract
    MoQ sessions integrate with IP multicast (SSM, ASM), Automatic
    Multicast Tunneling (AMT), and TreeDN for scalable live streaming.
    The specification includes a multicast catalog extension for endpoint
-   discovery, and delivery path
-   selection across TV, mobile, and browser platforms.  This document is
-   container-format agnostic and is referenced by both
-   [I-D.ramadan-moq-mmt] and [I-D.ramadan-moq-fec].
+   discovery, and delivery path selection across TV, mobile, and browser
+   platforms.  This document is container-format agnostic and is
+   referenced by both [I-D.ramadan-moq-mmt] and [I-D.ramadan-moq-fec].
 
 Status of This Memo
 
@@ -198,7 +197,10 @@ multicast domain into the MoQ application layer.
 
 ## 6. Transport Hierarchy
 
-MoQ clients select the highest-priority available transport:
+MoQ clients MAY select from the following transports based on
+availability and application policy.  The ordering below is a
+suggested default; applications are free to apply their own
+priority based on QoE, cost, or operational considerations:
 
 **Native clients (TV, mobile SDK)**:
 
@@ -231,7 +233,8 @@ or manual IWA installation.
 ## 7. Multicast Catalog Extension
 
 For tracks available via multicast, the MoQ catalog includes a
-top-level `multicast` field for endpoint discovery.
+top-level `multicast` field containing an `endpoints` array for
+endpoint discovery.
 
 ### 7.1. Multicast Endpoint Format
 
@@ -283,8 +286,14 @@ audio/video groups) use multiple elements:
 
 Endpoint field definitions:
 
-**sourceAddress** (string, REQUIRED for SSM): SSM source IP address
-  per [RFC4607].  If omitted, implies ASM.
+**protocol** (string, OPTIONAL): Transport protocol.
+  - "ssm": Source-Specific Multicast (RFC 4607).  This is the default
+    when `sourceAddress` is present.
+  - "asm": Any-Source Multicast.
+
+**sourceAddress** (string, OPTIONAL): SSM source IP address per
+  [RFC4607].  Required for Source-Specific Multicast.  If omitted,
+  implies ASM.
 
 **groupAddress** (string, REQUIRED): Multicast group address.
   - SSM range: 232.0.0.0/8 (IPv4), ff3x::/32 (IPv6)
@@ -293,23 +302,28 @@ Endpoint field definitions:
 **port** (integer, REQUIRED): UDP port number.
 
 **tracks** (array, REQUIRED): Track names available on this endpoint.
+  Track names correspond to the track identifiers used in the MoQ
+  catalog renditions.
 
-**networkSource** (object, OPTIONAL): Network delivery configuration
-  describing how subscribers can reach the multicast stream when
-  native IP multicast routing is not available.  Appears at the
-  `multicast` level (shared across all endpoints).  See Section 7.2.
+**networkSource** (object or array, OPTIONAL): Network delivery
+  configuration describing how subscribers can reach the multicast
+  stream when native IP multicast routing is not available.  May
+  appear on individual endpoints or at the top-level `multicast`
+  object to apply to all endpoints.  See Section 7.2.
 
 Subscribers receiving a catalog with multicast endpoints SHOULD
-auto-connect when multicast APIs are available (IWA DirectSocket,
-native UDP sockets, AMT tunneling).  This enables a seamless
-upgrade path: subscribers first connect via MoQ/QUIC to receive
-the catalog and media, then switch to multicast for lower-latency,
-FEC-protected delivery.
+auto-connect to the multicast group when multicast APIs are
+available (IWA DirectSocket, native UDP sockets, AMT tunneling).
+This enables a seamless upgrade path: subscribers first connect via
+MoQ/QUIC to receive the catalog and media, then optionally switch
+to multicast for lower-latency, FEC-protected delivery.
 
 ### 7.2. Network Source Types
 
 The `networkSource` field describes how subscribers can reach the
 multicast stream when native IP multicast routing is not available.
+It appears at the `multicast` level (applying to all endpoints) or
+on individual endpoints.
 
 **type** (string, REQUIRED): Delivery technology identifier.
 
@@ -393,16 +407,16 @@ The catalog's `packaging` field tells receivers which parser to use.
 
 ### 8.1. MMTP Multicast
 
-MMTP packets (source and repair) are transmitted as-is in UDP
-datagrams per [I-D.ramadan-moq-mmt].  The MMTP header provides
-packet_id for track routing, FEC type for source/repair
-discrimination, and NTP timestamps.  No additional framing needed.
+MMTP packets are transmitted as UDP datagrams per
+[I-D.ramadan-moq-mmt].  The MMTP header provides packet_id for
+track routing, FEC type for source/repair discrimination, and NTP
+timestamps.
 
 ### 8.2. LOC Multicast
 
-LOC objects are transmitted with LOC headers per [I-D.ietf-moq-loc].
-FEC Payload ID (SBN/ESI) is carried via LOC extension headers.
-Auth tags use the LOC Auth Tag extension.
+LOC objects are transmitted with LOC headers per
+[I-D.ietf-moq-loc].  FEC Payload ID and auth tags are carried via
+LOC extension headers.
 
 ### 8.3. Condensed Multicast
 
@@ -537,7 +551,7 @@ require IANA registration.
 
 ## Appendix A.  Catalog Examples
 
-### A.1.  Simple Catalog (Single Multicast Endpoint)
+### A.1.  Single Multicast Endpoint
 
 Catalog with FEC and multicast for a single SSM group:
 
@@ -592,7 +606,7 @@ and join the SSM group directly when multicast APIs are available.
 When native multicast is unavailable, the `networkSource` field
 directs subscribers to the AMT relay for tunneled delivery.
 
-### A.2.  Extended Catalog (Multiple Endpoints)
+### A.2.  Multiple Multicast Endpoints
 
 For deployments with multiple multicast groups (e.g., per-quality ABR
 tiers or separate audio/video groups):

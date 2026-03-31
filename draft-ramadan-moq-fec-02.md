@@ -477,6 +477,17 @@ each UDP datagram carries one condensed multicast packet.  This format
 provides audio/video demuxing (Track ID), FEC metadata (SBN/ESI), and
 optional authentication — all catalog-driven with no per-packet flags.
 
+The header layout is inspired by the ALC/LCT FEC Payload ID
+[RFC5510] but serves a different purpose: ALC carries objects over
+multicast with FLUTE file-delivery semantics, while this format
+carries real-time media symbols aligned with MoQ's group/object
+model.  Unlike ALC, the condensed format includes per-packet
+track routing (Track ID) and source/repair discrimination (Repair
+flag) needed for multi-track live media — fields that ALC delegates
+to the session layer.  The 8-byte fixed header is 4x smaller than
+MMTP repair (33 bytes) and avoids the session setup overhead of
+full ALC/LCT.
+
 ```
 Condensed Multicast Packet {
   Track ID (16),              // 2 bytes — audio/video routing
