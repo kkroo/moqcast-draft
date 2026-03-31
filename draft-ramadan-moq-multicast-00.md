@@ -14,10 +14,9 @@ Abstract
    based endpoint discovery for Media over QUIC (MoQ).  It defines how
    MoQ sessions integrate with IP multicast (SSM, ASM), Automatic
    Multicast Tunneling (AMT), and TreeDN for scalable live streaming.
-   The specification includes a multicast catalog extension with simple
-   and extended formats for endpoint discovery, delivery path selection
-   across TV, mobile, and browser platforms, and incentive models for
-   incremental multicast infrastructure deployment.  This document is
+   The specification includes a multicast catalog extension for endpoint
+   discovery, and delivery path
+   selection across TV, mobile, and browser platforms.  This document is
    container-format agnostic and is referenced by both
    [I-D.ramadan-moq-mmt] and [I-D.ramadan-moq-fec].
 
@@ -49,19 +48,13 @@ Table of Contents
    4.  SSM Group Allocation
    5.  TreeDN Integration
        5.1.  ISP Router AMT Deployment
-       5.2.  DePIN Incentives for Multicast Infrastructure
-       5.3.  IWA Home Gateway Architecture
    6.  Transport Hierarchy
    7.  Multicast Catalog Extension
-       7.1.  Simple Multicast Format
-       7.2.  Extended Multicast Format
-       7.3.  Format Detection
-       7.4.  Network Source Types
-             7.4.1.  AMT (Automatic Multicast Tunneling)
-             7.4.2.  ATSC 3.0 (Broadcast Television)
-             7.4.3.  DVB (Digital Video Broadcasting)
-             7.4.4.  5G Broadcast (3GPP MBS)
-             7.4.5.  Multiple Network Sources
+       7.1.  Multicast Endpoint Format
+       7.2.  Network Source Types
+             7.2.1.  AMT (Automatic Multicast Tunneling)
+             7.2.2.  ATSC 3.0 (Broadcast Television)
+             7.2.3.  Multiple Network Sources
    8.  Multicast Packet Formats
        8.1.  MMTP Multicast
        8.2.  LOC Multicast
@@ -73,8 +66,8 @@ Table of Contents
        11.1. Normative References
        11.2. Informative References
    Appendix A.  Catalog Examples
-       A.1.  Simple Catalog (Single Multicast Endpoint)
-       A.2.  Extended Catalog (Multiple Endpoints)
+       A.1.  Single Multicast Endpoint
+       A.2.  Multiple Multicast Endpoints
    Authors' Addresses
 ```
 
@@ -105,8 +98,6 @@ signaling of QUIC:
    trees with AMT relay bridging per [RFC9706]
 3. **Catalog extension**: A container-agnostic multicast endpoint
    discovery mechanism for MoQ catalogs
-4. **Incentive architecture**: DePIN token models for incremental
-   multicast infrastructure deployment
 
 This specification is container-format agnostic.  It works with
 MMT [I-D.ramadan-moq-mmt], CMAF [I-D.ietf-moq-cmsf], LOC
@@ -130,60 +121,26 @@ in BCP 14 [RFC2119] [RFC8174].
 **IWA**: Isolated Web App — a Chrome packaging format that grants
 DirectSocket API access
 
-**DePIN**: Decentralized Physical Infrastructure Network — a token-
-incentive model for infrastructure deployment
-
-**MBone**: Multicast Backbone — the original Internet multicast
-infrastructure, decommissioned circa 2000
-
 ## 3. Delivery Paths
 
 MoQ content can reach receivers via multiple delivery paths depending
 on platform capabilities:
 
-| Client Type | Multicast Path | Requirements |
-|-------------|----------------|--------------|
-| TV (ATSC 3.0 / ARIB) | SSM direct (tuner) | ATSC 3.0 or ARIB receiver hardware |
-| Android (native) | SSM via MulticastSocket | MulticastLock + CHANGE_WIFI_MULTICAST_STATE |
-| Android (5G Broadcast) | 3GPP MBS [3GPP-MBS] | Qualcomm LTE Broadcast SDK or 5G-MAG middleware |
-| iOS (native) | SSM via NWConnectionGroup | com.apple.developer.networking.multicast entitlement |
-| Browser (IWA enterprise) | SSM/AMT via DirectSocket | Admin-managed Chrome policy |
-| Browser (IWA DePIN) | SSM/AMT via DirectSocket | User-installed IWA (token-incentivized) |
-| Browser (IWA power user) | SSM/AMT via DirectSocket | Side-loaded IWA (chrome://flags) |
-| Browser (standard) | MoQ/WebTransport | None (production-ready path) |
+| Client Type | Multicast Path |
+|-------------|----------------|
+| Native (TV, mobile) | SSM direct via OS multicast API |
+| Native (no multicast) | AMT tunneling over UDP [RFC7450] |
+| Browser (IWA) | SSM/AMT via DirectSocket [WICG-DirectSockets] |
+| Browser (standard) | MoQ/WebTransport (unicast) |
 
 Both native SSM and AMT tunneling require UDP socket access.
+MoQ/WebTransport is the universal fallback and requires no
+special platform capabilities.
 
-**TV (ATSC 3.0 / ARIB)**: Broadcast TV receivers consume ROUTE/ALC
-or MMTP streams natively over RF tuner hardware.  These devices
-implement FEC decoding and S-TSID parsing per [ATSC-A331].  MoQ
-integration occurs at the gateway/head-end level via TreeDN [RFC9706]
-and AMT [RFC7450] / DRIAD [RFC8777].
-
-**Android**: Android provides MulticastSocket with MulticastLock for
-Wi-Fi multicast reception.  For 5G Broadcast, the device modem
-provides carrier-grade multicast via the Qualcomm LTE Broadcast SDK
-or 5G-MAG MBMS middleware [5GMAG-LIBFLUTE].
-
-**iOS**: iOS supports multicast via NWConnectionGroup (iOS 14+)
-with an Apple-granted entitlement.
-
-**Browser (IWA)**: The IWA (Isolated Web App) DirectSocket API
-[WICG-DirectSockets] provides UDPSocket with joinGroup()/leaveGroup()
-for SSM and ASM multicast reception.  IWAs are NOT distributable via
-the Chrome Web Store and require either enterprise Chrome admin policy,
-Google allowlisting, or manual user installation (chrome://flags or
-side-loading).  This limits mainstream consumer reach but serves three
-viable audiences: (1) enterprise/kiosk/signage deployments with managed
-Chrome, (2) DePIN (Decentralized Physical Infrastructure) networks where
-token incentives motivate users to install IWAs for higher-quality
-multicast reception, and (3) technical power users who opt in to IWA
-installation for direct multicast access.
-
-**Browser (standard)**: MoQ over WebTransport is the production-ready
-path for standard web browsers.  WebCodecs provides sub-100ms
-decode latency on Chrome/Edge; MSE provides Safari/Firefox fallback.
-This path requires no special permissions or entitlements.
+Broadcast receivers (ATSC 3.0, ARIB STD-B60) consume MMTP streams
+natively over RF tuner hardware.  MoQ integration occurs at the
+gateway/head-end level via TreeDN [RFC9706] and AMT [RFC7450] /
+DRIAD [RFC8777].
 
 ## 4. SSM Group Allocation
 
@@ -239,76 +196,6 @@ In both cases, the MoQ relay at the edge terminates the multicast/AMT
 path and serves clients over QUIC/WebTransport, bridging the ISP
 multicast domain into the MoQ application layer.
 
-### 5.2. DePIN Incentives for Multicast Infrastructure
-
-Decentralized Physical Infrastructure Networks (DePIN) provide a
-token-incentive model for operators and end users to grow multicast
-infrastructure, effectively rebuilding the multicast backbone (MBone)
-that was decommissioned in the early 2000s.
-
-Mobile and TV platforms represent the largest opportunity for
-token-incentivized multicast participation.  Android devices with
-MulticastSocket, iOS devices with NWConnectionGroup, 5G Broadcast
-receivers, and ATSC 3.0 tuners all have native multicast or
-broadcast reception capabilities that can be rewarded:
-
-- Mobile/TV users earn tokens for receiving content via multicast
-  or broadcast instead of unicast, reducing origin and CDN load
-- 5G Broadcast and ATSC 3.0 receivers contribute to network
-  offload simply by tuning in, with tokens rewarding participation
-- ISP operators earn tokens for enabling AMT relay on edge routers,
-  where a single appliance replaces racks of CDN servers
-  [JUNIPER-TREEDN]
-- IWA browser nodes on wired desktops or Chromeboxes earn tokens
-  for receiving multicast via DirectSocket and serving as local
-  WebTransport gateways to wireless clients on the same network
-  (see Section 5.3)
-
-Content providers pay fewer tokens for multicast delivery than
-unicast CDN, reflecting the order-of-magnitude cost reduction
-demonstrated in TreeDN deployments [JUNIPER-TREEDN].
-
-This creates a market-driven incentive to grow multicast
-reachability incrementally, without requiring coordinated global
-deployment.  Each additional AMT relay or multicast-capable
-endpoint expands the delivery tree, reducing aggregate bandwidth
-and cost for all participants.
-
-### 5.3. IWA Home Gateway Architecture
-
-An IWA node running on a wired-connected device (Chromebox, desktop,
-or mini-PC) can serve as a local multicast anchor point.  The device
-receives SSM or AMT multicast via DirectSocket over its wired
-Ethernet connection, which provides the stable, high-throughput link
-needed for sustained high-bitrate reception (4K, 8K, multi-view).
-
-The IWA node then operates as a local MoQ relay, redistributing
-content over WebTransport to wireless clients on the local network:
-
-```
-Internet (SSM/AMT)
-       |
-       v
- [ISP Router w/ AMT Relay]
-       |  wired Ethernet
-       v
- [Chromebox / Desktop IWA]  <-- DirectSocket multicast rx
-       |  WebTransport (local)
-       v
- [Phone] [Tablet] [Smart TV] [Laptop]
-```
-
-This architecture provides several advantages:
-
-1. Wired reception avoids Wi-Fi jitter and supports higher bitrates
-   than wireless multicast (which most consumer APs do not relay)
-2. A single multicast stream serves the entire household regardless
-   of the number of local viewers
-3. Wireless clients use standard MoQ/WebTransport with no IWA
-   requirement, no special permissions, and full browser compatibility
-4. The IWA gateway can apply local FEC repair, reducing retransmission
-   round trips to the origin
-
 ## 6. Transport Hierarchy
 
 MoQ clients select the highest-priority available transport:
@@ -338,72 +225,53 @@ fallback.
 
 NOTE: For general consumer web applications, MoQ/WebTransport
 (Priority 3) is effectively the highest-priority available transport.
-IWA DirectSocket (Priorities 1-2) is available to enterprise-managed
-Chrome, DePIN participants with token-incentivized IWA installation,
-and technical users who side-load the IWA [WICG-DirectSockets].
+IWA DirectSocket (Priorities 1-2) requires enterprise-managed Chrome
+or manual IWA installation.
 
 ## 7. Multicast Catalog Extension
 
 For tracks available via multicast, the MoQ catalog includes a
-top-level `multicast` field for endpoint discovery.  Two formats
-are defined: a simple flat format for single-endpoint SSM
-deployments, and an extended format for multi-endpoint or
-multi-group scenarios.
+top-level `multicast` field for endpoint discovery.
 
-### 7.1. Simple Multicast Format
+### 7.1. Multicast Endpoint Format
 
-The simple format is a flat object at the catalog root level with
-three fields.  This is the RECOMMENDED format for deployments where
-all tracks share a single SSM multicast group:
-
-```json
-{
-  "multicast": {
-    "groupAddress": "232.0.10.1",
-    "port": 8000,
-    "sourceAddress": "69.25.95.10"
-  }
-}
-```
-
-**groupAddress** (string, REQUIRED): Multicast group address.
-  - SSM range: 232.0.0.0/8 (IPv4), ff3x::/32 (IPv6)
-  - ASM range: 224.0.0.0/4 (IPv4), ff0x::/16 (IPv6)
-
-**port** (integer, REQUIRED): UDP port number.
-
-**sourceAddress** (string, OPTIONAL): SSM source IP address per [RFC4607].
-  Required for Source-Specific Multicast.  If omitted, implies ASM.
-
-**networkSource** (object, OPTIONAL): Network delivery configuration
-  describing how subscribers can reach the multicast stream.  This
-  enables endpoints that lack native multicast routing to receive
-  streams via alternative delivery technologies.  See Section 7.4.
-
-Subscribers receiving a catalog with the simple multicast format
-SHOULD auto-connect to the multicast group when multicast APIs are
-available (IWA DirectSocket, native UDP sockets, AMT tunneling).
-This enables a seamless upgrade path: subscribers first connect via
-MoQ/QUIC to receive the catalog and media, then optionally switch
-to multicast for lower-latency, FEC-protected delivery.
-
-### 7.2. Extended Multicast Format
-
-For deployments with multiple multicast groups (e.g., per-quality
-ABR tiers, separate audio/video groups, or ATSC 3.0 ingest with
-multiple TSI values), the extended format uses an `endpoints` array:
+The `multicast` field contains an `endpoints` array listing one or
+more multicast groups.  A single-endpoint deployment uses a
+one-element array:
 
 ```json
 {
   "multicast": {
     "endpoints": [{
-      "protocol": "ssm",
-      "sourceAddress": "192.168.1.100",
-      "groupAddress": "232.1.1.50",
-      "port": 5000,
-      "tsi": 1,
+      "sourceAddress": "69.25.95.10",
+      "groupAddress": "232.0.10.1",
+      "port": 8000,
       "tracks": ["video", "video/repair", "audio"]
-    }],
+    }]
+  }
+}
+```
+
+Multi-group deployments (e.g., per-quality ABR tiers or separate
+audio/video groups) use multiple elements:
+
+```json
+{
+  "multicast": {
+    "endpoints": [
+      {
+        "sourceAddress": "10.0.0.1",
+        "groupAddress": "232.1.1.1",
+        "port": 5004,
+        "tracks": ["video", "video/repair"]
+      },
+      {
+        "sourceAddress": "10.0.0.1",
+        "groupAddress": "232.1.1.2",
+        "port": 5004,
+        "tracks": ["audio"]
+      }
+    ],
     "networkSource": {
       "type": "amt",
       "discovery": "driad",
@@ -413,49 +281,41 @@ multiple TSI values), the extended format uses an `endpoints` array:
 }
 ```
 
-Extended endpoint field definitions:
+Endpoint field definitions:
 
-**protocol** (string, REQUIRED): Transport protocol.
-  - "ssm": Source-Specific Multicast (RFC 4607)
-  - "asm": Any-Source Multicast
-
-**sourceAddress** (string, REQUIRED for SSM): SSM source IP address.
+**sourceAddress** (string, REQUIRED for SSM): SSM source IP address
+  per [RFC4607].  If omitted, implies ASM.
 
 **groupAddress** (string, REQUIRED): Multicast group address.
+  - SSM range: 232.0.0.0/8 (IPv4), ff3x::/32 (IPv6)
+  - ASM range: 224.0.0.0/4 (IPv4), ff0x::/16 (IPv6)
 
 **port** (integer, REQUIRED): UDP port number.
-
-**tsi** (integer, OPTIONAL): Transport Session ID for correlation
-  with broadcast signaling (e.g., S-TSID, MMTP).
 
 **tracks** (array, REQUIRED): Track names available on this endpoint.
 
 **networkSource** (object, OPTIONAL): Network delivery configuration
-  (same as simple format).  See Section 7.4.
+  describing how subscribers can reach the multicast stream when
+  native IP multicast routing is not available.  Appears at the
+  `multicast` level (shared across all endpoints).  See Section 7.2.
 
-### 7.3. Format Detection
+Subscribers receiving a catalog with multicast endpoints SHOULD
+auto-connect when multicast APIs are available (IWA DirectSocket,
+native UDP sockets, AMT tunneling).  This enables a seamless
+upgrade path: subscribers first connect via MoQ/QUIC to receive
+the catalog and media, then switch to multicast for lower-latency,
+FEC-protected delivery.
 
-Subscribers MUST detect the multicast format by checking:
-
-1. If `multicast.groupAddress` exists → simple format (Section 7.1)
-2. If `multicast.endpoints` exists → extended format (Section 7.2)
-3. Otherwise → no multicast available
-
-Publishers MUST NOT include both `groupAddress` and `endpoints` in the
-same catalog.
-
-### 7.4. Network Source Types
+### 7.2. Network Source Types
 
 The `networkSource` field describes how subscribers can reach the
 multicast stream when native IP multicast routing is not available.
-It appears at the `multicast` level in both simple and extended
-formats.
 
 **type** (string, REQUIRED): Delivery technology identifier.
 
 Defined types:
 
-#### 7.4.1. AMT (Automatic Multicast Tunneling)
+#### 7.2.1. AMT (Automatic Multicast Tunneling)
 
 ```json
 {
@@ -482,7 +342,7 @@ Subscribers SHOULD attempt relay discovery in this order:
    "driad" or omitted
 3. Fall back to MoQ/QUIC unicast
 
-#### 7.4.2. ATSC 3.0 (Broadcast Television)
+#### 7.2.2. ATSC 3.0 (Broadcast Television)
 
 ```json
 {
@@ -509,52 +369,7 @@ tuner hardware (USB dongles, built-in tuners, or NextGen TV
 sets) can receive the stream directly over RF without Internet
 connectivity.
 
-#### 7.4.3. DVB (Digital Video Broadcasting)
-
-```json
-{
-  "networkSource": {
-    "type": "dvb",
-    "frequency": 474000,
-    "symbolRate": 6900,
-    "modulation": "QAM256",
-    "serviceId": 1
-  }
-}
-```
-
-**frequency** (integer, REQUIRED): RF center frequency in kHz.
-
-**symbolRate** (integer, OPTIONAL): Symbol rate in kBaud.
-
-**modulation** (string, OPTIONAL): Modulation scheme
-  (e.g., "QAM256", "QAM64", "QPSK").
-
-**serviceId** (integer, OPTIONAL): DVB service ID.
-
-#### 7.4.4. 5G Broadcast (3GPP MBS)
-
-```json
-{
-  "networkSource": {
-    "type": "5g-broadcast",
-    "tmgi": "00000A-00001",
-    "serviceArea": "us-west-1"
-  }
-}
-```
-
-**tmgi** (string, REQUIRED): Temporary Mobile Group Identity per
-  [3GPP-MBS].
-
-**serviceArea** (string, OPTIONAL): Service area identifier.
-
-This type indicates availability via 5G Multicast-Broadcast
-Services.  Android devices with MBS-capable modems can receive
-the stream via the Qualcomm LTE Broadcast SDK or 5G-MAG
-middleware [5GMAG-LIBFLUTE].
-
-#### 7.4.5. Multiple Network Sources
+#### 7.2.3. Multiple Network Sources
 
 When a stream is available via multiple delivery technologies,
 `networkSource` MAY be an array:
@@ -714,14 +529,6 @@ require IANA registration.
            Rayskiy, A., "Direct Sockets API", W3C Community Group
            Draft Report, https://wicg.github.io/direct-sockets/
 
-[5GMAG-LIBFLUTE]
-           5G-MAG, "rt-libflute: FLUTE/ALC sender and receiver",
-           https://github.com/5G-MAG/rt-libflute
-
-[3GPP-MBS]
-           3GPP, "5G Multicast-Broadcast Services; Stage 1",
-           TS 22.246, Release 17.
-
 [JUNIPER-TREEDN]
            Giuliano, L., "TreeDN - The Fix for Catastrophically
            Successful Live Streaming Events", Juniper TechPost,
@@ -765,9 +572,12 @@ Catalog with FEC and multicast for a single SSM group:
     }
   },
   "multicast": {
-    "groupAddress": "232.0.10.1",
-    "port": 8000,
-    "sourceAddress": "69.25.95.10",
+    "endpoints": [{
+      "sourceAddress": "69.25.95.10",
+      "groupAddress": "232.0.10.1",
+      "port": 8000,
+      "tracks": ["video", "repair", "audio"]
+    }],
     "networkSource": {
       "type": "amt",
       "relay": "69.25.95.1",
@@ -824,7 +634,6 @@ tiers or separate audio/video groups):
         "sourceAddress": "10.0.0.1",
         "groupAddress": "232.1.1.10",
         "port": 5000,
-        "tsi": 1,
         "tracks": ["video", "repair"]
       },
       {
@@ -832,7 +641,6 @@ tiers or separate audio/video groups):
         "sourceAddress": "10.0.0.1",
         "groupAddress": "232.1.1.10",
         "port": 5000,
-        "tsi": 2,
         "tracks": ["audio"]
       }
     ],
@@ -843,9 +651,6 @@ tiers or separate audio/video groups):
   }
 }
 ```
-
-Subscribers MUST check for the simple format fields (`groupAddress`, `port`)
-first.  If not present, check for the `endpoints` array.
 
 ## Authors' Addresses
 

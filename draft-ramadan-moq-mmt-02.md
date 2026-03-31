@@ -18,9 +18,8 @@ Abstract
    packets to MoQ objects, interaction with Application-Layer FEC
    including multi-path FEC delivery where MMTP repair packets are
    passed through identically across ATSC 3.0 broadcast, SSM multicast,
-   and MoQ CDN paths, bidirectional conversion between S-TSID and MoQ
-   catalogs, and compatibility considerations for both ATSC 3.0 and
-   ARIB STD-B60 systems.
+   and MoQ CDN paths, and compatibility considerations for both
+   ATSC 3.0 and ARIB STD-B60 systems.
 
 Status of This Memo
 
@@ -43,28 +42,20 @@ Table of Contents
    6.  FEC Integration
        6.1.  Interleaving
        6.2.  OTI Signaling
-   7.  FEC_CONFIG Message
-       7.1.  Message Format
-       7.2.  Repair Track Discovery
-       7.3.  Multicast Delivery of FEC_CONFIG
-   8.  Multicast Integration
-   9.  ARIB STD-B60 Compatibility
-       9.1.  Clock Reference
-       9.2.  8K UHDTV Support
-       9.3.  Hybridcast Integration
-       9.4.  Typical FEC Parameters
-   10. Transport Hierarchy
-   11. Catalog Signaling
-       11.1. Container Values
-       11.2. S-TSID to MoQ Catalog Conversion
-       11.3. MoQ Catalog to S-TSID Conversion
-       11.4. Multicast Catalog Extension Reference
-   12. Security Considerations
-       12.1. Multicast Security
-   13. IANA Considerations
-   14. References
+   7.  Multicast Integration
+   8.  ARIB STD-B60 Compatibility
+       8.1.  Clock Reference
+       8.2.  Hybridcast Integration
+       8.3.  Typical FEC Parameters
+   9.  Transport Hierarchy
+   10. Catalog Signaling
+       10.1. Packaging Registration
+       10.2. Multicast Endpoint Catalog Extension
+   11. Security Considerations
+       11.1. Multicast Security
+   12. IANA Considerations
+   13. References
    Appendix A. Bandwidth Comparison
-   Appendix B. S-TSID Conversion Example
    Authors' Addresses
 ```
 
@@ -93,8 +84,11 @@ over MoQ [I-D.ietf-moq-transport], enabling:
    per [I-D.ramadan-moq-fec]
 3. **Multicast promotion**: MoQ clients can receive SSM multicast
    directly when available, per [I-D.ramadan-moq-multicast]
-4. **Bidirectional signaling**: Convert between S-TSID (ATSC) and MoQ
-   catalogs for seamless interoperability
+
+NOTE: This specification targets gateway/ingest scenarios where
+ATSC 3.0 or ARIB STD-B60 broadcast content enters the MoQ ecosystem.
+For pure MoQ unicast delivery without broadcast interoperability
+requirements, LOC [I-D.ietf-moq-loc] is RECOMMENDED (see Section 4.2).
 
 ### 1.1. Relationship to Other MoQ Media Formats
 
@@ -402,89 +396,10 @@ S-TSID {
 }
 ```
 
-For MoQ, OTI is signaled via FEC_CONFIG message per
-[I-D.ramadan-moq-fec] Section 4.
+For MoQ, FEC parameters including OTI are signaled via catalog per
+[I-D.ramadan-moq-fec] Section 5.
 
-## 7. FEC_CONFIG Message
-
-The FEC_CONFIG message and its wire format are defined normatively
-in [I-D.ramadan-moq-fec] Section 4.1.  This document does not
-redefine FEC_CONFIG but specifies MMT-specific considerations for
-its use.
-
-### 7.1. MMT-Specific FEC_CONFIG Usage
-
-When used with MMT packaging, the FEC_CONFIG fields map as follows:
-
-- **FEC Algorithm**: Typically 0x02 (RaptorQ) for ATSC 3.0 ingest,
-  or as specified in MMTP AL-FEC signaling
-- **Repair Container**: 0x01 (MMTP) for MMT packaging.  See
-  [I-D.ramadan-moq-fec] Section 4.6
-- **Source Symbols Per Block**: Corresponds to the number of MFUs
-  (or MMTP packets) covered by one FEC block
-- **Interleave Depth**: Number of MPU frames spanned by each FEC
-  block, matching the original broadcast FEC interleave depth
-- **OTI**: For RaptorQ, the 12-byte concatenation of Common FEC OTI
-  and Scheme-Specific FEC OTI per [RFC6330]
-
-When Repair Container is 0x01 (MMTP), per-packet OTI embedded in
-each MMTP repair packet (12 bytes at byte offset 21) provides
-immediate decoder configuration without FEC_CONFIG.  FEC_CONFIG
-is therefore OPTIONAL for MMTP container mode; if sent, its
-fields are informational and SHOULD match the per-packet OTI
-values.
-
-See [I-D.ramadan-moq-fec] for the complete message format, field
-definitions, algorithm registry, and precedence rules.
-
-### 7.2. Repair Track Discovery
-
-When FEC is enabled, the repair track uses the naming convention
-defined in [I-D.ramadan-moq-fec] Section 6.1:
-
-```
-Source Track:  [namespace, track_name]
-Repair Track:  [namespace, track_name, "repair"]
-```
-
-The subscriber MUST subscribe to the repair track separately.
-The repair track uses lower priority (typically 7) so repair
-symbols are dropped first under congestion.
-
-### 7.3. Multicast Delivery of FEC_CONFIG
-
-For multicast (SSM/ASM) delivery where bidirectional signaling is
-not available, FEC_CONFIG parameters are conveyed via:
-
-1. **MMTP AL-FEC Signaling (message_id=0x0203)**: In-band delivery
-   per ISO/IEC 23008-1:2023 Amendment 1:2025
-
-2. **MoQ Catalog Extension**: Out-of-band delivery via catalog JSON:
-
-```json
-{
-  "tracks": [
-    {
-      "name": "video",
-      "packaging": "mmtp",
-      "fec": {
-        "algorithm": "raptorq",
-        "sourceSymbols": 32,
-        "repairSymbols": 8,
-        "interleaveDepth": 30,
-        "symbolSize": 1312,
-        "repairTrack": "video/repair"
-      }
-    },
-    {
-      "name": "video/repair",
-      "packaging": "mmtp"
-    }
-  ]
-}
-```
-
-## 8. Multicast Integration
+## 7. Multicast Integration
 
 MMT content can be delivered via IP multicast (SSM, AMT) and TreeDN
 for scalable distribution.  Platform-specific delivery paths, SSM
@@ -500,13 +415,13 @@ content into the MoQ application layer via QUIC/WebTransport.
 For ATSC 3.0 and ARIB STD-B60 receivers, MMTP over SSM is the
 native delivery path and requires no protocol translation.
 
-## 9. ARIB STD-B60 Compatibility
+## 8. ARIB STD-B60 Compatibility
 
 ARIB STD-B60 (Japan's MMT-based broadcasting standard) uses the
 same ISO 23008-1 foundation as ATSC 3.0 with the following specific
 considerations:
 
-### 9.1. Clock Reference
+### 8.1. Clock Reference
 
 ARIB STD-B60 uses UTC wallclock timestamps in NTP short format,
 consistent with ISO 23008-1.  The MMTP Timestamp field carries the
@@ -522,30 +437,7 @@ MoQ Timestamp (seconds) = MMTP Timestamp upper 16 bits
 
 Note: This differs from MPEG-2 TS, which uses a 90kHz PTS/DTS clock.
 
-### 9.2. 8K UHDTV Support
-
-ARIB STD-B60 supports 8K UHDTV (7680x4320) via HEVC Main 10 profile
-at Level 6.1 (4:2:0, 10-bit).
-For efficient 8K delivery:
-
-1. **Tiled Delivery**: MoQ Group boundaries SHOULD align with HEVC
-   CTU rows for spatial random access
-2. **Parallel Decoding**: Multiple MoQ tracks MAY carry tile regions
-   for parallel decode
-3. **Bandwidth**: 8K @ 60fps requires ~80-100 Mbps; FEC adds 25%
-
-Example 8K track structure:
-```
-namespace: "live/8k"
-tracks:
-  - video/tile_0_0  (top-left quadrant)
-  - video/tile_0_1  (top-right quadrant)
-  - video/tile_1_0  (bottom-left quadrant)
-  - video/tile_1_1  (bottom-right quadrant)
-  - video/repair    (FEC for all tiles)
-```
-
-### 9.3. Hybridcast Integration
+### 8.2. Hybridcast Integration
 
 ARIB defines Hybridcast for companion device synchronization
 (second screen experiences).  When bridging Hybridcast services:
@@ -565,7 +457,7 @@ Catalog extension for Hybridcast:
 }
 ```
 
-### 9.4. Typical FEC Parameters
+### 8.3. Typical FEC Parameters
 
 ARIB STD-B60 deployments typically use more conservative FEC
 parameters than ATSC 3.0:
@@ -580,7 +472,7 @@ parameters than ATSC 3.0:
 Publishers SHOULD preserve original FEC parameters when ingesting
 ARIB STD-B60 content.
 
-## 10. Transport Hierarchy
+## 9. Transport Hierarchy
 
 Clients SHOULD attempt transports in preference order.  The transport
 hierarchy for native clients (TV, mobile) and browser clients is
@@ -591,12 +483,12 @@ SSM/AMT paths since there is no retransmission.  On MoQ/QUIC paths,
 FEC reduces retransmission latency but QUIC provides a reliable
 fallback.
 
-## 11. Catalog Signaling
+## 10. Catalog Signaling
 
 The MoQ catalog signals MMT packaging via the standard CMSF
 `packaging` field [I-D.ietf-moq-catalogformat].
 
-### 11.1. Packaging Registration
+### 10.1. Packaging Registration
 
 This document registers "mmtp" as a MoQ Streaming Format packaging
 value:
@@ -634,162 +526,30 @@ types (mmtp, loc, cmaf), each is a separate track in the catalog.
 The subscriber chooses which packaging to subscribe to based on
 its capabilities.
 
-### 11.2. S-TSID to MoQ Catalog Conversion
-
-When ingesting ATSC 3.0 content delivered via ROUTE, generate MoQ
-catalog from the S-TSID signaling table (defined in ATSC A/331 for
-the ROUTE transport layer).  For MMT-delivered content, equivalent
-parameters are obtained from MMTP signaling messages (MPT/MPI):
-
-```
-S-TSID Input:
-<S-TSID>
-  <RS sIpAddr="192.168.1.100" dIpAddr="232.1.1.50" dPort="5000">
-    <LS tsi="1" bw="5000000">
-      <SrcFlow rt="true">
-        <ContentInfo>
-          <MediaInfo contentType="video" repId="1080p"/>
-        </ContentInfo>
-        <Payload codePoint="128" formatId="2"/>
-      </SrcFlow>
-      <RepairFlow>
-        <FECParameters maximumDelay="1000" overhead="25"
-                       fecOTI="K=32;T=1312;Z=4">
-          <ProtectedObject tsi="1">
-            <SourceTOI x="0" y="255"/>
-          </ProtectedObject>
-        </FECParameters>
-      </RepairFlow>
-    </LS>
-  </RS>
-</S-TSID>
-
-MoQ Catalog Output:
-{
-  "version": 1,
-  "namespace": "atsc/service_1",
-  "tracks": [
-    {
-      "name": "video",
-      "packaging": "mmtp",
-      "codec": "avc1.64001f",
-      "bitrate": 5000000,
-      "fec": {
-        "algorithm": "raptorq",
-        "sourceSymbols": 32,
-        "repairSymbols": 8,
-        "symbolSize": 1312,
-        "interleaveDepth": 4,
-        "repairTrack": "video/repair"
-      }
-    },
-    {
-      "name": "video/repair",
-      "packaging": "mmtp"
-    }
-  ],
-  "multicast": {
-    "endpoints": [{
-      "protocol": "ssm",
-      "sourceAddress": "192.168.1.100",
-      "groupAddress": "232.1.1.50",
-      "port": 5000,
-      "tsi": 1,
-      "tracks": ["video", "video/repair"]
-    }]
-  }
-}
-```
-
-The `multicast` field in the output uses the extended format defined
-in [I-D.ramadan-moq-multicast] Section 7.2.  Conversion rules:
-- `RS@sIpAddr` → `multicast.endpoints[].sourceAddress`
-- `RS@dIpAddr` → `multicast.endpoints[].groupAddress`
-- `RS@dPort` → `multicast.endpoints[].port`
-- `LS@tsi` → `multicast.endpoints[].tsi`
-- `LS@bw` → `track.bitrate`
-- `FECParameters@overhead` → `fec.p` (computed as K × overhead / 100)
-- `fecOTI` K,T,Z → `fec.sourceSymbols`, `fec.symbolSize`, `fec.interleaveDepth`
-
-### 11.3. MoQ Catalog to S-TSID Conversion
-
-When generating ATSC-compatible output, convert MoQ catalog to S-TSID:
-
-```
-MoQ Catalog Input:
-{
-  "tracks": [{
-    "name": "video",
-    "bitrate": 5000000,
-    "fec": {
-      "algorithm": "raptorq",
-      "sourceSymbols": 32,
-      "repairSymbols": 8,
-      "symbolSize": 1312,
-      "interleaveDepth": 4,
-      "repairTrack": "video/repair"
-    }
-  }],
-  "multicast": {
-    "endpoints": [{
-      "sourceAddress": "192.168.1.100",
-      "groupAddress": "232.1.1.50",
-      "port": 5000,
-      "tsi": 1
-    }]
-  }
-}
-
-S-TSID Output:
-<S-TSID xmlns="tag:atsc.org,2016:XMLSchemas/ATSC3/Delivery/S-TSID/1.0/">
-  <RS sIpAddr="192.168.1.100" dIpAddr="232.1.1.50" dPort="5000">
-    <LS tsi="1" bw="5000000">
-      <SrcFlow rt="true" minBuffSize="5000000">
-        <ContentInfo>
-          <MediaInfo contentType="video"/>
-        </ContentInfo>
-        <Payload codePoint="128" formatId="2" srcFecPayloadId="6"/>
-      </SrcFlow>
-      <RepairFlow>
-        <FECParameters maximumDelay="133" overhead="25"
-                       fecOTI="F=32;T=1312;Z=4;N=1;Al=8">
-        </FECParameters>
-      </RepairFlow>
-    </LS>
-  </RS>
-</S-TSID>
-```
-
-Conversion rules:
-- `multicast.endpoints[].sourceAddress` → `RS@sIpAddr`
-- `fec.p / fec.k × 100` → `FECParameters@overhead`
-- `fec.interleaveDepth × frameDuration` → `FECParameters@maximumDelay`
-
-### 11.4. Multicast Endpoint Catalog Extension
+### 10.2. Multicast Endpoint Catalog Extension
 
 The multicast catalog extension — including simple and extended
 formats and format detection rules — is defined in
 [I-D.ramadan-moq-multicast] Section 7.
 
-When converting S-TSID to MoQ catalog (Section 11.2), the `multicast`
-field in the output catalog MUST conform to the extended format
-defined in [I-D.ramadan-moq-multicast] Section 7.2, using the
-`endpoints` array to represent per-TSI multicast groups.
+When ATSC 3.0 content is ingested into MoQ, the `multicast` field
+in the catalog SHOULD conform to the format defined in
+[I-D.ramadan-moq-multicast] Section 7.
 
-## 12. Security Considerations
+## 11. Security Considerations
 
 MMT content protection uses Common Encryption (CENC) which is
 preserved through MoQ transport.  The MMTP header is not encrypted,
 allowing relays to inspect packet type and sequence without
 accessing media content.
 
-### 12.1. Multicast Security
+### 11.1. Multicast Security
 
 Multicast-specific security considerations (source authentication,
 replay protection, AMT relay trust) are defined in
 [I-D.ramadan-moq-multicast] Section 8.
 
-## 13. IANA Considerations
+## 12. IANA Considerations
 
 This document requests registration of a MoQ Streaming Format
 packaging value in the registry established by
@@ -799,14 +559,7 @@ packaging value in the registry established by
 |-----------|-------------|-----------|
 | "mmtp" | MMTP-encapsulated media per ISO 23008-1 | This document |
 
-This document also requests registration of MoQ message type
-(shared with [I-D.ramadan-moq-fec]):
-
-| Type | Name | Reference |
-|------|------|-----------|
-| 0x50 | FEC_CONFIG | This document |
-
-## 14. References
+## 13. References
 
 [RFC2119]
     Bradner, S., "Key words for use in RFCs to Indicate
@@ -828,6 +581,10 @@ This document also requests registration of MoQ message type
 [I-D.ietf-moq-transport]
     Curley, L., et al., "Media over QUIC Transport",
     draft-ietf-moq-transport (work in progress).
+
+[I-D.ietf-moq-loc]
+    Jennings, C., et al., "Low Overhead Container for Media
+    over QUIC", draft-ietf-moq-loc (work in progress).
 
 [I-D.ramadan-moq-fec]
     Ramadan, O., "Forward Error Correction for Media over QUIC",
@@ -863,9 +620,8 @@ FEC signaling bandwidth overhead:
 
 | Method | Size | When Sent |
 |--------|------|-----------|
-| FEC_CONFIG (0x50) | ~30 bytes | After SUBSCRIBE_OK |
-| MMTP AL-FEC (0x0203) | ~42 bytes | First signaling packet |
 | Catalog JSON FEC | ~100 bytes | Catalog fetch |
+| MMTP AL-FEC (0x0203) | ~42 bytes | First signaling packet |
 
 ### A.2. Per-Object Overhead (Recurring)
 
@@ -874,7 +630,6 @@ FEC signaling bandwidth overhead:
 | LOC Extension | 8 bytes | Every object |
 | MoQ Extensions (CMAF+FEC) | ~10-12 bytes | Every CMAF source object |
 | MMTP Header | 12 bytes | Every packet |
-| FEC_CONFIG | 0 bytes | N/A (one-time) |
 
 Note: The MoQ Extensions row accounts for FEC PID extension (8 bytes)
 + Object Length extension (1-4 bytes varint).  LOC source objects need
@@ -887,13 +642,13 @@ For a 30fps stream with k=32 source symbols per FEC block:
 
 | Method | Overhead/second | Overhead/hour |
 |--------|-----------------|---------------|
-| FEC_CONFIG | ~0.03 KB | ~0.1 KB |
+| Catalog JSON FEC | ~0.003 KB | ~0.01 KB |
 | LOC Extension | ~0.24 KB | ~0.86 MB |
 | MMTP (source only) | ~0.36 KB | ~1.3 MB |
 | MMTP + Repair | ~0.50 KB | ~1.8 MB |
 
-FEC_CONFIG has the lowest per-session overhead and zero
-per-object overhead, making it ideal for unicast MoQ.
+Catalog FEC fields have the lowest per-session overhead and zero
+per-object overhead, making them ideal for unicast MoQ.
 
 MMTP AL-FEC signaling has higher initial overhead but
 works without bidirectional signaling (multicast).
@@ -902,124 +657,10 @@ works without bidirectional signaling (multicast).
 
 | Use Case | Recommended Method |
 |----------|-------------------|
-| MoQ Unicast | FEC_CONFIG |
+| MoQ Unicast | Catalog FEC fields |
 | SSM Multicast | MMTP AL-FEC |
-| Adaptive FEC | FEC_CONFIG + dynamic updates |
-| Hybrid (MoQ + SSM) | Both (MMTP in-band, FEC_CONFIG for unicast) |
-
-## Appendix B. S-TSID Conversion Example
-
-Complete example showing bidirectional conversion between
-ATSC S-TSID and MoQ catalog for a multi-track service.
-
-### B.1. Original ATSC S-TSID
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<S-TSID xmlns="tag:atsc.org,2016:XMLSchemas/ATSC3/Delivery/S-TSID/1.0/">
-  <RS sIpAddr="10.0.0.1" dIpAddr="232.1.1.10" dPort="5000">
-    <!-- Video 1080p -->
-    <LS tsi="1" bw="8000000">
-      <SrcFlow rt="true" minBuffSize="8000000">
-        <ContentInfo>
-          <MediaInfo contentType="video" repId="1080p" lang="en"/>
-        </ContentInfo>
-        <EFDT>
-          <FDT-Instance Expires="4294967295">
-            <File Content-Location="video/1080p/init.mp4" TOI="1"/>
-          </FDT-Instance>
-        </EFDT>
-        <Payload codePoint="128" formatId="2" srcFecPayloadId="6"/>
-      </SrcFlow>
-      <RepairFlow>
-        <FECParameters maximumDelay="1000" overhead="25"
-                       fecOTI="F=32;T=1312;Z=30;N=1;Al=8">
-          <ProtectedObject tsi="1">
-            <SourceTOI x="0" y="65535"/>
-          </ProtectedObject>
-        </FECParameters>
-      </RepairFlow>
-    </LS>
-    <!-- Audio Stereo -->
-    <LS tsi="2" bw="128000">
-      <SrcFlow rt="true">
-        <ContentInfo>
-          <MediaInfo contentType="audio" repId="stereo" lang="en"/>
-        </ContentInfo>
-        <Payload codePoint="128" formatId="2"/>
-      </SrcFlow>
-    </LS>
-  </RS>
-</S-TSID>
-```
-
-### B.2. Converted MoQ Catalog
-
-```json
-{
-  "version": 1,
-  "namespace": "atsc/service_broadcast",
-  "generatedAt": "2026-07-15T10:30:00Z",
-  "tracks": [
-    {
-      "name": "video/1080p",
-      "packaging": "mmtp",
-      "codec": "avc1.64001f",
-      "width": 1920,
-      "height": 1080,
-      "framerate": 30,
-      "bitrate": 8000000,
-      "language": "en",
-      "fec": {
-        "algorithm": "raptorq",
-        "sourceSymbols": 32,
-        "repairSymbols": 8,
-        "symbolSize": 1312,
-        "interleaveDepth": 30,
-        "repairTrack": "video/1080p/repair"
-      }
-    },
-    {
-      "name": "video/1080p/repair",
-      "packaging": "mmtp",
-      "priority": 7
-    },
-    {
-      "name": "audio/stereo",
-      "packaging": "mmtp",
-      "codec": "mp4a.40.2",
-      "sampleRate": 48000,
-      "channelCount": 2,
-      "bitrate": 128000,
-      "language": "en"
-    }
-  ],
-  "multicast": {
-    "endpoints": [
-      {
-        "protocol": "ssm",
-        "sourceAddress": "10.0.0.1",
-        "groupAddress": "232.1.1.10",
-        "port": 5000,
-        "tsi": 1,
-        "tracks": ["video/1080p", "video/1080p/repair"]
-      },
-      {
-        "protocol": "ssm",
-        "sourceAddress": "10.0.0.1",
-        "groupAddress": "232.1.1.10",
-        "port": 5000,
-        "tsi": 2,
-        "tracks": ["audio/stereo"]
-      }
-    ],
-    "networkSource": {
-      "type": "amt",
-      "discovery": "driad"
-    }
-  }
-}
-```
+| Adaptive FEC | Catalog FEC fields + catalog updates |
+| Hybrid (MoQ + SSM) | Both (MMTP in-band, catalog for unicast) |
 
 ## Authors' Addresses
 
