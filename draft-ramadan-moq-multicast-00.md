@@ -62,12 +62,16 @@ Table of Contents
              7.4.3.  DVB (Digital Video Broadcasting)
              7.4.4.  5G Broadcast (3GPP MBS)
              7.4.5.  Multiple Network Sources
-   8.  Security Considerations
-       8.1.  Multicast Security
-   9.  IANA Considerations
-   10. References
-       10.1. Normative References
-       10.2. Informative References
+   8.  Multicast Packet Formats
+       8.1.  MMTP Multicast
+       8.2.  LOC Multicast
+       8.3.  Condensed Multicast
+   9.  Security Considerations
+       9.1.  Multicast Security
+   10. IANA Considerations
+   11. References
+       11.1. Normative References
+       11.2. Informative References
    Appendix A.  Catalog Examples
        A.1.  Simple Catalog (Single Multicast Endpoint)
        A.2.  Extended Catalog (Multiple Endpoints)
@@ -655,7 +659,7 @@ require IANA registration.
 
 ## 11. References
 
-### 10.1. Normative References
+### 11.1. Normative References
 
 [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
            Requirement Levels", BCP 14, RFC 2119,
@@ -683,7 +687,7 @@ require IANA registration.
            I. Swett, "Media over QUIC Transport",
            draft-ietf-moq-transport (work in progress).
 
-### 10.2. Informative References
+### 11.2. Informative References
 
 [I-D.ramadan-moq-mmt]
            Ramadan, O., "MPEG Media Transport (MMT) Packaging for
@@ -840,7 +844,7 @@ tiers or separate audio/video groups):
 }
 ```
 
-Subscribers MUST check for the simple format fields (`group`, `port`)
+Subscribers MUST check for the simple format fields (`groupAddress`, `port`)
 first.  If not present, check for the `endpoints` array.
 
 ## Authors' Addresses

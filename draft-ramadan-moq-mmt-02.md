@@ -120,6 +120,12 @@ CMAF packaging (CMSF/CARP) is RECOMMENDED when:
 
 ## 2. Terminology
 
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+"SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+"OPTIONAL" in this document are to be interpreted as described in
+BCP 14 [RFC2119] [RFC8174] when, and only when, they appear in all
+capitals, as shown here.
+
 **MMTP**: MMT Protocol - the packet layer of MMT (ISO 23008-1 Clause 8)
 
 **MPU**: Media Processing Unit - a self-contained media segment in MMT,
@@ -685,8 +691,8 @@ MoQ Catalog Output:
   "multicast": {
     "endpoints": [{
       "protocol": "ssm",
-      "source": "192.168.1.100",
-      "group": "232.1.1.50",
+      "sourceAddress": "192.168.1.100",
+      "groupAddress": "232.1.1.50",
       "port": 5000,
       "tsi": 1,
       "tracks": ["video", "video/repair"]
@@ -697,13 +703,13 @@ MoQ Catalog Output:
 
 The `multicast` field in the output uses the extended format defined
 in [I-D.ramadan-moq-multicast] Section 7.2.  Conversion rules:
-- `RS@sIpAddr` → `multicast.endpoints[].source`
-- `RS@dIpAddr` → `multicast.endpoints[].group`
+- `RS@sIpAddr` → `multicast.endpoints[].sourceAddress`
+- `RS@dIpAddr` → `multicast.endpoints[].groupAddress`
 - `RS@dPort` → `multicast.endpoints[].port`
 - `LS@tsi` → `multicast.endpoints[].tsi`
 - `LS@bw` → `track.bitrate`
 - `FECParameters@overhead` → `fec.p` (computed as K × overhead / 100)
-- `fecOTI` K,T,Z → `fec.k`, `fec.symbolSize`, `fec.interleaveDepth`
+- `fecOTI` K,T,Z → `fec.sourceSymbols`, `fec.symbolSize`, `fec.interleaveDepth`
 
 ### 11.3. MoQ Catalog to S-TSID Conversion
 
@@ -726,8 +732,8 @@ MoQ Catalog Input:
   }],
   "multicast": {
     "endpoints": [{
-      "source": "192.168.1.100",
-      "group": "232.1.1.50",
+      "sourceAddress": "192.168.1.100",
+      "groupAddress": "232.1.1.50",
       "port": 5000,
       "tsi": 1
     }]
@@ -755,7 +761,7 @@ S-TSID Output:
 ```
 
 Conversion rules:
-- `multicast.endpoints[].source` → `RS@sIpAddr`
+- `multicast.endpoints[].sourceAddress` → `RS@sIpAddr`
 - `fec.p / fec.k × 100` → `FECParameters@overhead`
 - `fec.interleaveDepth × frameDuration` → `FECParameters@maximumDelay`
 
@@ -992,22 +998,23 @@ ATSC S-TSID and MoQ catalog for a multi-track service.
     "endpoints": [
       {
         "protocol": "ssm",
-        "source": "10.0.0.1",
-        "group": "232.1.1.10",
+        "sourceAddress": "10.0.0.1",
+        "groupAddress": "232.1.1.10",
         "port": 5000,
         "tsi": 1,
         "tracks": ["video/1080p", "video/1080p/repair"]
       },
       {
         "protocol": "ssm",
-        "source": "10.0.0.1",
-        "group": "232.1.1.10",
+        "sourceAddress": "10.0.0.1",
+        "groupAddress": "232.1.1.10",
         "port": 5000,
         "tsi": 2,
         "tracks": ["audio/stereo"]
       }
     ],
-    "amtFallback": {
+    "networkSource": {
+      "type": "amt",
       "discovery": "driad"
     }
   }

@@ -386,8 +386,8 @@ container" signaling is needed — the packaging field IS the signal.
 
 ### 5.1. Catalog Fields
 
-MoQ catalogs [I-D.ietf-moq-loc] MAY include FEC configuration at the
-track level:
+MoQ catalogs [I-D.ietf-moq-catalogformat] MAY include FEC
+configuration at the track level:
 
 ```json
 {
@@ -1290,6 +1290,10 @@ confirmed.
            Zanaty, M., et al., "Low Overhead Media Container",
            draft-ietf-moq-loc (work in progress).
 
+[I-D.ietf-moq-catalogformat]
+           Nandakumar, S., et al., "Common Catalog Format for
+           MoQ", draft-ietf-moq-catalogformat (work in progress).
+
 [I-D.ietf-moq-cmsf]
            Law, W., "CMSF: A CMAF Compliant Implementation of
            MOQT Streaming Format", draft-ietf-moq-cmsf
@@ -1506,9 +1510,9 @@ three packaging types with their corresponding repair tracks:
     }
   ],
   "multicast": {
-    "group": "232.1.1.50",
+    "groupAddress": "232.1.1.50",
     "port": 5000,
-    "source": "192.168.1.100"
+    "sourceAddress": "192.168.1.100"
   }
 }
 ```
