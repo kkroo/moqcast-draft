@@ -13,11 +13,12 @@ Abstract
    This document specifies multicast delivery mechanisms and catalog-
    based endpoint discovery for Media over QUIC (MoQ).  It defines how
    MoQ sessions integrate with IP multicast (SSM, ASM), Automatic
-   Multicast Tunneling (AMT), and TreeDN for scalable live media
-   delivery.  The specification includes a multicast catalog extension
-   for endpoint discovery, delivery path selection across TV, mobile,
-   and browser platforms, and a transport priority hierarchy.  This
-   document is container-format agnostic and is referenced by both
+   Multicast Tunneling (AMT), and TreeDN for scalable live streaming.
+   The specification includes a multicast catalog extension with simple
+   and extended formats for endpoint discovery, delivery path selection
+   across TV, mobile, and browser platforms, and incentive models for
+   incremental multicast infrastructure deployment.  This document is
+   container-format agnostic and is referenced by both
    [I-D.ramadan-moq-mmt] and [I-D.ramadan-moq-fec].
 
 Status of This Memo
@@ -48,7 +49,8 @@ Table of Contents
    4.  SSM Group Allocation
    5.  TreeDN Integration
        5.1.  ISP Router AMT Deployment
-       5.2.  IWA Home Gateway Architecture
+       5.2.  DePIN Incentives for Multicast Infrastructure
+       5.3.  IWA Home Gateway Architecture
    6.  Transport Hierarchy
    7.  Multicast Catalog Extension
        7.1.  Simple Multicast Format
@@ -74,13 +76,24 @@ Table of Contents
 
 ## 1. Introduction
 
-Live streaming at scale strains unicast CDN architectures, particularly
-at 4K/8K bitrates.  IP multicast replicates streams at the network
-layer but lacks widespread ISP deployment.  Media over QUIC (MoQ)
-[I-D.ietf-moq-transport] provides modern real-time media transport
-over QUIC, yet its unicast model shares the same scaling limits.
+Live streaming audiences routinely reach tens of millions of
+concurrent viewers, with events like Thursday Night Football
+consuming roughly a quarter of all Internet traffic on broadcast
+nights [JUNIPER-TREEDN].  Traditional HTTP-based CDN architectures
+replicate streams at x86 server farms close to viewers, but this
+approach does not scale cost-effectively for 4K/8K/360-degree
+bitrates.
 
-This document specifies how MoQ integrates with IP multicast:
+IP multicast provides an alternative where a single stream is
+replicated at the network layer, but lacks the economic incentives
+for widespread ISP deployment.  Media over QUIC (MoQ)
+[I-D.ietf-moq-transport] provides a modern transport for real-time
+media, but its unicast model faces the same scaling limitations as
+HTTP CDNs for mass-audience events.
+
+This document specifies how MoQ integrates with IP multicast to
+combine the scalability of multicast with the reliability and
+signaling of QUIC:
 
 1. **Delivery paths**: Platform-specific multicast reception for
    TV, mobile, and browser clients
@@ -88,13 +101,12 @@ This document specifies how MoQ integrates with IP multicast:
    trees with AMT relay bridging per [RFC9706]
 3. **Catalog extension**: A container-agnostic multicast endpoint
    discovery mechanism for MoQ catalogs
+4. **Incentive architecture**: DePIN token models for incremental
+   multicast infrastructure deployment
 
-This specification is container-format agnostic and works with
+This specification is container-format agnostic.  It works with
 MMT [I-D.ramadan-moq-mmt], CMAF [I-D.ietf-moq-cmsf], LOC
-[I-D.ietf-moq-loc], or any other MoQ packaging format.  Multicast
-packet framing is specified by [I-D.ramadan-moq-fec]: condensed
-format for catalog-aware receivers (LOC/CMAF content), or MMTP for
-broadcast-compatible receivers.
+[I-D.ietf-moq-loc], or any other MoQ packaging format.
 
 ## 2. Terminology
 
@@ -111,45 +123,63 @@ in BCP 14 [RFC2119] [RFC8174].
 
 **TreeDN**: Tree-based Content Delivery Network [RFC9706]
 
-**IWA**: Isolated Web App -- a Chrome packaging format granting
+**IWA**: Isolated Web App — a Chrome packaging format that grants
 DirectSocket API access
+
+**DePIN**: Decentralized Physical Infrastructure Network — a token-
+incentive model for infrastructure deployment
+
+**MBone**: Multicast Backbone — the original Internet multicast
+infrastructure, decommissioned circa 2000
 
 ## 3. Delivery Paths
 
-MoQ content reaches receivers via multiple delivery paths depending
+MoQ content can reach receivers via multiple delivery paths depending
 on platform capabilities:
 
 | Client Type | Multicast Path | Requirements |
 |-------------|----------------|--------------|
 | TV (ATSC 3.0 / ARIB) | SSM direct (tuner) | ATSC 3.0 or ARIB receiver hardware |
-| Android (native) | SSM via MulticastSocket | MulticastLock permission |
-| Android (5G Broadcast) | 3GPP MBS [3GPP-MBS] | MBS-capable modem + middleware |
+| Android (native) | SSM via MulticastSocket | MulticastLock + CHANGE_WIFI_MULTICAST_STATE |
+| Android (5G Broadcast) | 3GPP MBS [3GPP-MBS] | Qualcomm LTE Broadcast SDK or 5G-MAG middleware |
 | iOS (native) | SSM via NWConnectionGroup | com.apple.developer.networking.multicast entitlement |
-| Browser (IWA) | SSM/AMT via DirectSocket | IWA installation (enterprise policy, side-load, or allowlisting) |
-| Browser (standard) | MoQ/WebTransport | None (production-ready) |
+| Browser (IWA enterprise) | SSM/AMT via DirectSocket | Admin-managed Chrome policy |
+| Browser (IWA DePIN) | SSM/AMT via DirectSocket | User-installed IWA (token-incentivized) |
+| Browser (IWA power user) | SSM/AMT via DirectSocket | Side-loaded IWA (chrome://flags) |
+| Browser (standard) | MoQ/WebTransport | None (production-ready path) |
 
 Both native SSM and AMT tunneling require UDP socket access.
 
-**TV (ATSC 3.0 / ARIB)**: Broadcast receivers consume ROUTE/ALC or
-MMTP natively over RF tuner hardware with FEC decoding and S-TSID
-parsing per [ATSC-A331].  MoQ integration occurs at the gateway level
-via TreeDN [RFC9706] and AMT [RFC7450] / DRIAD [RFC8777].
+**TV (ATSC 3.0 / ARIB)**: Broadcast TV receivers consume ROUTE/ALC
+or MMTP streams natively over RF tuner hardware.  These devices
+implement FEC decoding and S-TSID parsing per [ATSC-A331].  MoQ
+integration occurs at the gateway/head-end level via TreeDN [RFC9706]
+and AMT [RFC7450] / DRIAD [RFC8777].
 
-**Android**: MulticastSocket with MulticastLock for Wi-Fi multicast.
-For 5G Broadcast, the device modem provides carrier-grade multicast
-via MBS middleware [5GMAG-LIBFLUTE].
+**Android**: Android provides MulticastSocket with MulticastLock for
+Wi-Fi multicast reception.  For 5G Broadcast, the device modem
+provides carrier-grade multicast via the Qualcomm LTE Broadcast SDK
+or 5G-MAG MBMS middleware [5GMAG-LIBFLUTE].
 
-**iOS**: NWConnectionGroup (iOS 14+) with Apple-granted entitlement.
+**iOS**: iOS supports multicast via NWConnectionGroup (iOS 14+)
+with an Apple-granted entitlement.
 
-**Browser (IWA)**: The DirectSocket API [WICG-DirectSockets] provides
-UDPSocket with joinGroup()/leaveGroup() for SSM and ASM reception.
-IWAs require enterprise Chrome policy, Google allowlisting, or manual
-user installation, limiting consumer reach but serving enterprise,
-kiosk, and power-user deployments.
+**Browser (IWA)**: The IWA (Isolated Web App) DirectSocket API
+[WICG-DirectSockets] provides UDPSocket with joinGroup()/leaveGroup()
+for SSM and ASM multicast reception.  IWAs are NOT distributable via
+the Chrome Web Store and require either enterprise Chrome admin policy,
+Google allowlisting, or manual user installation (chrome://flags or
+side-loading).  This limits mainstream consumer reach but serves three
+viable audiences: (1) enterprise/kiosk/signage deployments with managed
+Chrome, (2) DePIN (Decentralized Physical Infrastructure) networks where
+token incentives motivate users to install IWAs for higher-quality
+multicast reception, and (3) technical power users who opt in to IWA
+installation for direct multicast access.
 
-**Browser (standard)**: MoQ over WebTransport is the production path
-for standard browsers.  WebCodecs provides sub-100ms decode latency;
-MSE provides fallback.  No special permissions required.
+**Browser (standard)**: MoQ over WebTransport is the production-ready
+path for standard web browsers.  WebCodecs provides sub-100ms
+decode latency on Chrome/Edge; MSE provides Safari/Firefox fallback.
+This path requires no special permissions or entitlements.
 
 ## 4. SSM Group Allocation
 
@@ -174,6 +204,7 @@ For large-scale MoQ deployments, TreeDN [RFC9706] provides:
 - Hierarchical multicast distribution trees
 - AMT relay discovery via DRIAD [RFC8777]
 - CDN interconnection semantics
+- Replication-as-a-Service (RaaS) replacing x86 CDN servers
 
 MoQ relays MAY operate as TreeDN nodes, forwarding packets
 over both unicast (QUIC) and multicast (SSM/AMT) paths simultaneously.
@@ -185,26 +216,70 @@ When operating as a TreeDN node:
 
 ### 5.1. ISP Router AMT Deployment
 
-ISP edge routers can serve as AMT relays, replacing x86 CDN servers
-with inline packet replication on existing routing silicon
-[JUNIPER-TREEDN].  AMT relay capability is built into commodity
-routing chipsets and requires no additional hardware.
+Thousands of ISP routers already deployed at network edges can serve
+as AMT relays with minimal configuration, replacing racks of x86 CDN
+servers with inline packet replication on existing routing silicon
+[JUNIPER-TREEDN].  For example, AMT relay capability is built into
+commodity routing chipsets and requires no additional licenses or
+service blades — a single appliance performs the replication function
+that previously demanded dedicated CDN server complexes.
 
-This architecture offloads unicast replication to in-network routers
-performing either:
+This architecture offloads HTTP-based unicast replication from
+origin and CDN servers to in-network routers that perform either:
 
-- Native SSM replication where PIM-SSM is enabled
-- AMT unicast replication per [RFC7450] where multicast is unavailable
+- Native SSM multicast replication where the ISP has enabled PIM-SSM
+- AMT unicast replication where multicast is not available, with the
+  router acting as the AMT relay endpoint per [RFC7450]
 
-The MoQ relay at the edge terminates the multicast/AMT path and serves
-clients over QUIC/WebTransport.
+In both cases, the MoQ relay at the edge terminates the multicast/AMT
+path and serves clients over QUIC/WebTransport, bridging the ISP
+multicast domain into the MoQ application layer.
 
-### 5.2. IWA Home Gateway Architecture
+### 5.2. DePIN Incentives for Multicast Infrastructure
 
-An IWA node on a wired device (Chromebox, desktop, mini-PC) can serve
-as a local multicast-to-MoQ gateway.  It receives SSM or AMT multicast
-via DirectSocket over wired Ethernet, then redistributes content over
-WebTransport to wireless clients on the local network:
+Decentralized Physical Infrastructure Networks (DePIN) provide a
+token-incentive model for operators and end users to grow multicast
+infrastructure, effectively rebuilding the multicast backbone (MBone)
+that was decommissioned in the early 2000s.
+
+Mobile and TV platforms represent the largest opportunity for
+token-incentivized multicast participation.  Android devices with
+MulticastSocket, iOS devices with NWConnectionGroup, 5G Broadcast
+receivers, and ATSC 3.0 tuners all have native multicast or
+broadcast reception capabilities that can be rewarded:
+
+- Mobile/TV users earn tokens for receiving content via multicast
+  or broadcast instead of unicast, reducing origin and CDN load
+- 5G Broadcast and ATSC 3.0 receivers contribute to network
+  offload simply by tuning in, with tokens rewarding participation
+- ISP operators earn tokens for enabling AMT relay on edge routers,
+  where a single appliance replaces racks of CDN servers
+  [JUNIPER-TREEDN]
+- IWA browser nodes on wired desktops or Chromeboxes earn tokens
+  for receiving multicast via DirectSocket and serving as local
+  WebTransport gateways to wireless clients on the same network
+  (see Section 5.3)
+
+Content providers pay fewer tokens for multicast delivery than
+unicast CDN, reflecting the order-of-magnitude cost reduction
+demonstrated in TreeDN deployments [JUNIPER-TREEDN].
+
+This creates a market-driven incentive to grow multicast
+reachability incrementally, without requiring coordinated global
+deployment.  Each additional AMT relay or multicast-capable
+endpoint expands the delivery tree, reducing aggregate bandwidth
+and cost for all participants.
+
+### 5.3. IWA Home Gateway Architecture
+
+An IWA node running on a wired-connected device (Chromebox, desktop,
+or mini-PC) can serve as a local multicast anchor point.  The device
+receives SSM or AMT multicast via DirectSocket over its wired
+Ethernet connection, which provides the stable, high-throughput link
+needed for sustained high-bitrate reception (4K, 8K, multi-view).
+
+The IWA node then operates as a local MoQ relay, redistributing
+content over WebTransport to wireless clients on the local network:
 
 ```
 Internet (SSM/AMT)
@@ -219,10 +294,16 @@ Internet (SSM/AMT)
  [Phone] [Tablet] [Smart TV] [Laptop]
 ```
 
-This provides: (1) wired reception avoids Wi-Fi jitter, (2) a single
-multicast stream serves the entire household, (3) wireless clients
-use standard MoQ/WebTransport with no IWA or special permissions, and
-(4) the gateway can apply local FEC repair.
+This architecture provides several advantages:
+
+1. Wired reception avoids Wi-Fi jitter and supports higher bitrates
+   than wireless multicast (which most consumer APs do not relay)
+2. A single multicast stream serves the entire household regardless
+   of the number of local viewers
+3. Wireless clients use standard MoQ/WebTransport with no IWA
+   requirement, no special permissions, and full browser compatibility
+4. The IWA gateway can apply local FEC repair, reducing retransmission
+   round trips to the origin
 
 ## 6. Transport Hierarchy
 
@@ -248,43 +329,28 @@ MoQ clients select the highest-priority available transport:
 
 For each transport tier, if FEC repair tracks are available,
 subscribers SHOULD subscribe to repair tracks at the same priority.
+FEC reduces retransmission latency but QUIC provides a reliable
+fallback.
 
 NOTE: For general consumer web applications, MoQ/WebTransport
 (Priority 3) is effectively the highest-priority available transport.
-IWA DirectSocket (Priorities 1-2) is limited to enterprise-managed
-Chrome and users who side-load the IWA [WICG-DirectSockets].
-
-When content is delivered via multicast (SSM or AMT), the packet
-framing depends on the media container and receiver capabilities:
-
-- **LOC or CMAF content**: Multicast packets use the condensed format
-  (Repair Container 0x02 per [I-D.ramadan-moq-fec]) when receivers
-  obtain the catalog via MoQ.  The condensed format carries per-packet
-  timestamp, sequence number, and keyframe flag plus catalog-driven
-  optional fields (FEC Payload ID, Object Length, Auth Tag) at roughly
-  one-third the overhead of MMTP.
-
-- **MMTP content**: Multicast packets use native MMTP headers (Repair
-  Container 0x01 per [I-D.ramadan-moq-fec]) for ISO 23008-1 /
-  ATSC 3.0 / ARIB STD-B60 compatibility.  MMTP headers are
-  self-describing and do not require a catalog.
-
-The multicast catalog extension (Section 7) is container-format
-agnostic.  The same endpoint configuration applies regardless of
-whether the multicast stream uses condensed or MMTP framing.
+IWA DirectSocket (Priorities 1-2) is available to enterprise-managed
+Chrome, DePIN participants with token-incentivized IWA installation,
+and technical users who side-load the IWA [WICG-DirectSockets].
 
 ## 7. Multicast Catalog Extension
 
 For tracks available via multicast, the MoQ catalog includes a
 top-level `multicast` field for endpoint discovery.  Two formats
 are defined: a simple flat format for single-endpoint SSM
-deployments, and an extended format for multi-endpoint scenarios.
+deployments, and an extended format for multi-endpoint or
+multi-group scenarios.
 
 ### 7.1. Simple Multicast Format
 
-The simple format is a flat object at the catalog root level.
-This is the RECOMMENDED format for deployments where all tracks
-share a single SSM multicast group:
+The simple format is a flat object at the catalog root level with
+three fields.  This is the RECOMMENDED format for deployments where
+all tracks share a single SSM multicast group:
 
 ```json
 {
@@ -302,21 +368,26 @@ share a single SSM multicast group:
 
 **port** (integer, REQUIRED): UDP port number.
 
-**sourceAddress** (string, OPTIONAL): SSM source IP per [RFC4607].
-  Required for SSM.  If omitted, implies ASM.
+**sourceAddress** (string, OPTIONAL): SSM source IP address per [RFC4607].
+  Required for Source-Specific Multicast.  If omitted, implies ASM.
 
-**networkSource** (object, OPTIONAL): Network delivery configuration.
-  See Section 7.4.
+**networkSource** (object, OPTIONAL): Network delivery configuration
+  describing how subscribers can reach the multicast stream.  This
+  enables endpoints that lack native multicast routing to receive
+  streams via alternative delivery technologies.  See Section 7.4.
 
 Subscribers receiving a catalog with the simple multicast format
 SHOULD auto-connect to the multicast group when multicast APIs are
-available.
+available (IWA DirectSocket, native UDP sockets, AMT tunneling).
+This enables a seamless upgrade path: subscribers first connect via
+MoQ/QUIC to receive the catalog and media, then optionally switch
+to multicast for lower-latency, FEC-protected delivery.
 
 ### 7.2. Extended Multicast Format
 
-For deployments with multiple multicast groups (per-quality ABR
-tiers, separate audio/video groups, or multiple TSI values), the
-extended format uses an `endpoints` array:
+For deployments with multiple multicast groups (e.g., per-quality
+ABR tiers, separate audio/video groups, or ATSC 3.0 ingest with
+multiple TSI values), the extended format uses an `endpoints` array:
 
 ```json
 {
@@ -338,11 +409,13 @@ extended format uses an `endpoints` array:
 }
 ```
 
-Extended endpoint fields:
+Extended endpoint field definitions:
 
-**protocol** (string, REQUIRED): "ssm" (RFC 4607) or "asm".
+**protocol** (string, REQUIRED): Transport protocol.
+  - "ssm": Source-Specific Multicast (RFC 4607)
+  - "asm": Any-Source Multicast
 
-**sourceAddress** (string, REQUIRED for SSM): SSM source IP.
+**sourceAddress** (string, REQUIRED for SSM): SSM source IP address.
 
 **groupAddress** (string, REQUIRED): Multicast group address.
 
@@ -351,29 +424,32 @@ Extended endpoint fields:
 **tsi** (integer, OPTIONAL): Transport Session ID for correlation
   with broadcast signaling (e.g., S-TSID, MMTP).
 
-**tracks** (array, REQUIRED): Track names on this endpoint.
+**tracks** (array, REQUIRED): Track names available on this endpoint.
 
-**networkSource** (object, OPTIONAL): Network delivery configuration.
-  See Section 7.4.
+**networkSource** (object, OPTIONAL): Network delivery configuration
+  (same as simple format).  See Section 7.4.
 
 ### 7.3. Format Detection
 
 Subscribers MUST detect the multicast format by checking:
 
-1. If `multicast.groupAddress` exists -> simple format (Section 7.1)
-2. If `multicast.endpoints` exists -> extended format (Section 7.2)
-3. Otherwise -> no multicast available
+1. If `multicast.groupAddress` exists → simple format (Section 7.1)
+2. If `multicast.endpoints` exists → extended format (Section 7.2)
+3. Otherwise → no multicast available
 
 Publishers MUST NOT include both `groupAddress` and `endpoints` in the
 same catalog.
 
 ### 7.4. Network Source Types
 
-The `networkSource` field describes how subscribers reach the
-multicast stream when native IP multicast routing is unavailable.
-It appears at the `multicast` level in both formats.
+The `networkSource` field describes how subscribers can reach the
+multicast stream when native IP multicast routing is not available.
+It appears at the `multicast` level in both simple and extended
+formats.
 
 **type** (string, REQUIRED): Delivery technology identifier.
+
+Defined types:
 
 #### 7.4.1. AMT (Automatic Multicast Tunneling)
 
@@ -388,14 +464,18 @@ It appears at the `multicast` level in both formats.
 ```
 
 **relay** (string, OPTIONAL): AMT relay address (IP or hostname).
+  When present, subscribers SHOULD connect directly to this relay.
 
-**discovery** (string, OPTIONAL): Relay discovery method.
-  - "driad": DNS Reverse IP AMT Discovery per [RFC8777] (RECOMMENDED).
-  - "manual": Relay address in `relay` field.
+**discovery** (string, OPTIONAL): AMT relay discovery method.
+  - "driad": DNS Reverse IP AMT Discovery per [RFC8777].
+    Subscribers query the source IP's reverse DNS for AMT relay
+    records.  This is the RECOMMENDED discovery method.
+  - "manual": Relay address is provided in the `relay` field.
 
 Subscribers SHOULD attempt relay discovery in this order:
 1. Use `relay` directly if provided
-2. Use DRIAD on the SSM source IP if `discovery` is "driad" or omitted
+2. Use DRIAD discovery on the SSM source IP if `discovery` is
+   "driad" or omitted
 3. Fall back to MoQ/QUIC unicast
 
 #### 7.4.2. ATSC 3.0 (Broadcast Television)
@@ -413,12 +493,17 @@ Subscribers SHOULD attempt relay discovery in this order:
 
 **frequency** (integer, REQUIRED): RF center frequency in kHz.
 
-**plpId** (integer, OPTIONAL): Physical Layer Pipe ID (default 0).
+**plpId** (integer, OPTIONAL): Physical Layer Pipe ID.
+  Defaults to 0 (base PLP).
 
-**serviceId** (integer, OPTIONAL): Service ID within the multiplex.
+**serviceId** (integer, OPTIONAL): Service ID within the
+  broadcast multiplex.
 
-Receivers with ATSC 3.0 tuner hardware can receive the stream
-directly over RF per [ATSC-A331].
+This type indicates the multicast stream is available via an
+ATSC 3.0 broadcast signal [ATSC-A331].  Receivers with ATSC 3.0
+tuner hardware (USB dongles, built-in tuners, or NextGen TV
+sets) can receive the stream directly over RF without Internet
+connectivity.
 
 #### 7.4.3. DVB (Digital Video Broadcasting)
 
@@ -460,7 +545,9 @@ directly over RF per [ATSC-A331].
 
 **serviceArea** (string, OPTIONAL): Service area identifier.
 
-Android devices with MBS-capable modems receive via MBS
+This type indicates availability via 5G Multicast-Broadcast
+Services.  Android devices with MBS-capable modems can receive
+the stream via the Qualcomm LTE Broadcast SDK or 5G-MAG
 middleware [5GMAG-LIBFLUTE].
 
 #### 7.4.5. Multiple Network Sources
@@ -477,15 +564,74 @@ When a stream is available via multiple delivery technologies,
 }
 ```
 
-Subscribers select the highest-priority available source per
-Section 6.
+Subscribers select the highest-priority available source per the
+transport hierarchy defined in Section 6.
 
-## 8. Security Considerations
+## 8. Multicast Packet Formats
 
-### 8.1. Multicast Security
+Each MoQ packaging type defines its own multicast UDP wire format.
+The catalog's `packaging` field tells receivers which parser to use.
 
-SSM limits traffic to authorized sources via (S,G) filtering.
-Additional mechanisms:
+### 8.1. MMTP Multicast
+
+MMTP packets (source and repair) are transmitted as-is in UDP
+datagrams per [I-D.ramadan-moq-mmt].  The MMTP header provides
+packet_id for track routing, FEC type for source/repair
+discrimination, and NTP timestamps.  No additional framing needed.
+
+### 8.2. LOC Multicast
+
+LOC objects are transmitted with LOC headers per [I-D.ietf-moq-loc].
+FEC Payload ID (SBN/ESI) is carried via LOC extension headers.
+Auth tags use the LOC Auth Tag extension.
+
+### 8.3. Condensed Multicast
+
+The condensed format provides lightweight multicast framing for
+CMAF content.  Each UDP datagram carries one condensed packet:
+
+```
+Condensed Multicast Packet {
+  Track ID (16),              // audio/video routing
+  Repair (8),                 // 0=source, 1=repair
+  Source Block Number (32),   // SBN
+  Encoding Symbol ID (32),   // ESI
+  Payload (..),               // source chunk or repair symbol
+  [Auth Tag (N)],             // if catalog signals auth
+}
+```
+
+**Track ID** (16 bits): Identifies the media track within the SSM
+  group (e.g., video=1, audio=2).  Assigned by the publisher and
+  signaled in the catalog.  Analogous to MMTP packet_id.
+
+**Repair** (8 bits): 0 for source, 1 for repair.  Needed because
+  K varies per block (e.g., blocks spanning keyframes), making
+  ESI >= K unreliable for source/repair discrimination.
+
+**SBN/ESI** (32+32 bits): Always present.  CMAF chunks are
+  variable-size and don't map 1:1 to FEC source symbols, so
+  explicit SBN+ESI is mandatory (unlike LOC where it's derivable
+  from MoQ framing).
+
+**Auth Tag** (N bytes): Present when the catalog declares an auth
+  scheme.  Tag size N is fixed per stream.  No per-packet flag —
+  presence is catalog-driven.
+
+Fixed overhead: 11 bytes.  Compared to MMTP (33 bytes for repair
+with FEC Payload ID + OTI) this is 3x more compact.
+
+On the MoQ unicast path, condensed packaging uses the headerless
+format defined in [I-D.ramadan-moq-fec] Section 7.1 with SBN/ESI
+derived from MoQ transport framing.  The multicast wire format in
+this section applies only to IP multicast UDP delivery.
+
+## 9. Security Considerations
+
+### 9.1. Multicast Security
+
+SSM inherently limits traffic to authorized sources via (S,G)
+filtering.  For additional security:
 
 - **DTLS-SRTP**: Encrypt media payloads when confidentiality is
   required over multicast
@@ -495,22 +641,17 @@ Additional mechanisms:
   attacks; receivers SHOULD verify decoded media structure
 - **Replay Protection**: Sequence numbers enable detection of
   replayed or reordered packets
-- **AMT Relay Trust**: Trust delegated to relay authentication
-  per [RFC7450]
-- **Content Authentication**: Publishers MAY include an Auth Tag
-  MoQ extension header per [I-D.ramadan-moq-fec] on source track
-  objects.  The auth tag (e.g., ALTA) enables receivers to verify
-  content integrity across untrusted relay chains, complementing
-  SSM source address validation and QUIC hop-by-hop integrity.
-  The authentication scheme and tag size are signaled in the catalog.
+- **AMT Relay Trust**: For AMT, trust is delegated to the relay's
+  authentication mechanisms per [RFC7450]
+- **Content Authentication**: For content integrity across untrusted relay chains, publishers MAY include an Auth Tag MoQ extension header per [I-D.ramadan-moq-fec] on source track objects. The auth tag (e.g., ALTA) enables receivers to verify that media content has not been modified in transit, complementing SSM source address validation and QUIC hop-by-hop integrity. The authentication scheme and tag size are signaled in the catalog.
 
-## 9. IANA Considerations
+## 10. IANA Considerations
 
 This document has no IANA actions.  The multicast catalog extension
 (Section 7) is a JSON schema extension to MoQ catalogs and does not
 require IANA registration.
 
-## 10. References
+## 11. References
 
 ### 10.1. Normative References
 
@@ -630,14 +771,15 @@ Catalog with FEC and multicast for a single SSM group:
 }
 ```
 
-Subscribers auto-discover the multicast endpoint from the catalog and
-join the SSM group when multicast APIs are available.  The
-`networkSource` field directs subscribers to the AMT relay when native
-multicast is unavailable.
+Subscribers auto-discover the multicast endpoint from the catalog
+and join the SSM group directly when multicast APIs are available.
+When native multicast is unavailable, the `networkSource` field
+directs subscribers to the AMT relay for tunneled delivery.
 
 ### A.2.  Extended Catalog (Multiple Endpoints)
 
-Catalog with multiple multicast groups for per-quality ABR tiers:
+For deployments with multiple multicast groups (e.g., per-quality ABR
+tiers or separate audio/video groups):
 
 ```json
 {
@@ -696,8 +838,8 @@ Catalog with multiple multicast groups for per-quality ABR tiers:
 }
 ```
 
-Subscribers MUST check for simple format fields (`groupAddress`,
-`port`) first, then the `endpoints` array.
+Subscribers MUST check for the simple format fields (`group`, `port`)
+first.  If not present, check for the `endpoints` array.
 
 ## Authors' Addresses
 
