@@ -744,14 +744,16 @@ Auth Tag Extension {
 }
 ```
 
-The Auth Tag extension carries an N-byte authentication tag, where N
-is fixed per stream and signaled in the catalog (auth scheme + tag
-size).  The catalog declares the auth scheme, key distribution
-mechanism, and tag size — the receiver knows the exact value of N
-before the first object arrives.
+The Auth Tag extension carries an authentication tag whose length
+is given by the MoQ extension Length field.  Tag size may be fixed
+(HMAC-SHA256: always 32 bytes) or variable (ALTA
+[I-D.krose-mboned-alta]: varies per packet depending on MAC chain
+depth and signature presence).  The catalog declares the auth
+scheme and key distribution mechanism; the per-object Length field
+carries the actual tag size.
 
 This extension is OPTIONAL on both source and repair track objects,
-and applies to all container modes (LOC, CMAF).
+and applies to all packaging modes (LOC, CMAF, condensed).
 
 The Auth Tag provides end-to-end content authentication across
 untrusted relays (e.g., ALTA).  MoQ transport security (TLS/QUIC)
