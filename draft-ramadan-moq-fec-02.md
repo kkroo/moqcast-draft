@@ -752,8 +752,9 @@ depth and signature presence).  The catalog declares the auth
 scheme and key distribution mechanism; the per-object Length field
 carries the actual tag size.
 
-This extension is OPTIONAL on both source and repair track objects,
-and applies to all packaging modes (LOC, CMAF, condensed).
+This extension is OPTIONAL on LOC source and repair track objects.
+MMTP tracks use MMTP-native authentication.  Condensed multicast
+packets carry auth via the Auth Length field (Section 7.4).
 
 The Auth Tag provides end-to-end content authentication across
 untrusted relays (e.g., ALTA).  MoQ transport security (TLS/QUIC)
