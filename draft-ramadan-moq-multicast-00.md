@@ -83,7 +83,7 @@ signaling of QUIC:
 1. **Delivery paths**: Platform-specific multicast reception for
    TV, mobile, and browser clients
 2. **Catalog extension**: A container-agnostic multicast endpoint
-   discovery mechanism for MoQ catalogs
+   discovery mechanism for MoQ catalogs [I-D.ietf-moq-catalogformat]
 
 MoQ relays MAY operate as TreeDN [RFC9706] nodes for hierarchical
 distribution.
@@ -145,6 +145,10 @@ top-level `multicast` field containing an `endpoints` array for
 endpoint discovery.
 
 ### 5.1. Multicast Endpoint Format
+
+The `multicast` field is a catalog extension per
+[I-D.ietf-moq-catalogformat] Section 3.1.  Parsers that do not
+support multicast MUST ignore it.
 
 The `multicast` field contains an `endpoints` array listing one or
 more multicast groups.  A single-endpoint deployment uses a
@@ -394,6 +398,10 @@ require IANA registration.
 [I-D.ietf-moq-loc]
            Zanaty, M., et al., "Low Overhead Media Container",
            draft-ietf-moq-loc (work in progress).
+
+[I-D.ietf-moq-catalogformat]
+           Nandakumar, S., et al., "Common Catalog Format for
+           MoQ", draft-ietf-moq-catalogformat (work in progress).
 
 [ATSC-A331]
            ATSC, "Signaling, Delivery, Synchronization, and Error

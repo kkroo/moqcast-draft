@@ -281,16 +281,27 @@ container" signaling is needed — the packaging field IS the signal.
 
 ### 5.1. Catalog Fields
 
-MoQ catalogs [I-D.ietf-moq-catalogformat] signal FEC configuration
-at the track level.  The catalog is the sole mechanism for
-communicating FEC parameters to subscribers:
+MoQ catalogs [I-D.ietf-moq-catalogformat] MAY include FEC
+configuration as an extension field at the track level.  The `fec`
+object is a custom extension per [I-D.ietf-moq-catalogformat]
+Section 3.1; parsers that do not support FEC MUST ignore it.
 
 ```json
 {
+  "version": 1,
+  "streamingFormat": 1,
+  "streamingFormatVersion": "0.2",
   "tracks": [
     {
       "name": "video",
       "packaging": "mmtp",
+      "selectionParams": {
+        "codec": "avc1.64001f",
+        "width": 1920,
+        "height": 1080,
+        "framerate": 30,
+        "bitrate": 5000000
+      },
       "fec": {
         "algorithm": "raptorq",
         "sourceSymbols": 32,
@@ -334,6 +345,10 @@ FEC block.  Default is 1.
 
 **repairTrack** (string, REQUIRED): Track name for repair symbols,
 following the convention in Section 6.1.
+
+Media properties (codec, width, height, framerate, bitrate, samplerate,
+channelConfig) are defined in the `selectionParams` object per
+[I-D.ietf-moq-catalogformat] Section 3.2.17 and are not repeated here.
 
 ## 6. Repair Track Convention
 
@@ -953,13 +968,19 @@ except CMAF sources whose repair tracks use condensed packaging.
 ```json
 {
   "version": 1,
-  "namespace": "live/broadcast",
+  "streamingFormat": 1,
+  "streamingFormatVersion": "0.2",
   "tracks": [
     {
       "name": "video",
       "packaging": "mmtp",
-      "codec": "avc1.64001f",
-      "width": 1920, "height": 1080, "framerate": 30, "bitrate": 5000000,
+      "selectionParams": {
+        "codec": "avc1.64001f",
+        "width": 1920,
+        "height": 1080,
+        "framerate": 30,
+        "bitrate": 5000000
+      },
       "fec": {
         "algorithm": "raptorq",
         "sourceSymbols": 32, "repairSymbols": 8,
@@ -971,8 +992,11 @@ except CMAF sources whose repair tracks use condensed packaging.
     {
       "name": "video.cmaf",
       "packaging": "cmaf",
-      "codec": "avc1.64001f",
-      "width": 1920, "height": 1080,
+      "selectionParams": {
+        "codec": "avc1.64001f",
+        "width": 1920,
+        "height": 1080
+      },
       "fec": {
         "algorithm": "raptorq",
         "sourceSymbols": 32, "repairSymbols": 8,
@@ -984,8 +1008,12 @@ except CMAF sources whose repair tracks use condensed packaging.
     {
       "name": "audio",
       "packaging": "mmtp",
-      "codec": "mp4a.40.2",
-      "sampleRate": 48000, "channelCount": 2, "bitrate": 128000,
+      "selectionParams": {
+        "codec": "mp4a.40.2",
+        "samplerate": 48000,
+        "channelConfig": "2",
+        "bitrate": 128000
+      },
       "fec": {
         "algorithm": "xor",
         "sourceSymbols": 10, "repairSymbols": 1,

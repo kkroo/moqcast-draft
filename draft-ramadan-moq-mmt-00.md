@@ -399,8 +399,8 @@ Note: This differs from MPEG-2 TS, which uses a 90kHz PTS/DTS clock.
 
 ## 9. Catalog Signaling
 
-The MoQ catalog signals MMT packaging via the standard CMSF
-`packaging` field [I-D.ietf-moq-catalogformat].
+The MoQ catalog signals MMT packaging via the `packaging` field
+per [I-D.ietf-moq-catalogformat].
 
 ### 9.1. Packaging Registration
 
@@ -418,14 +418,19 @@ type, timestamp, sequence number, and FEC metadata natively.
 Example:
 ```json
 {
+  "version": 1,
+  "streamingFormat": 1,
+  "streamingFormatVersion": "0.2",
   "tracks": [
     {
       "name": "video",
       "packaging": "mmtp",
-      "codec": "avc1.64001f",
-      "width": 1920,
-      "height": 1080,
-      "framerate": 30
+      "selectionParams": {
+        "codec": "avc1.64001f",
+        "width": 1920,
+        "height": 1080,
+        "framerate": 30
+      }
     },
     {
       "name": "video/repair",
