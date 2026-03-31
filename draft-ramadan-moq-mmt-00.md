@@ -202,7 +202,7 @@ An MMT stream maps to MoQ tracks as follows:
 | MFU sequence | Object ID |
 | AL-FEC repair | Track "video/repair" |
 
-For ATSC 3.0 ingest, the gateway preserves the original packet_id assignments from the MPT (MMT Package Table). For MoQ-originated content using MMTP packaging, publishers assign packet_id values sequentially starting from 0 (video=0, audio=1, etc.) and signal the mapping in the catalog.
+For ATSC 3.0 ingest, the gateway preserves the original packet_id assignments from the MPT (MMT Package Table). For MoQ-originated content using MMTP packaging, packet_id 0 is reserved for signaling messages (Section 4.5), with media tracks assigned sequentially starting from 1 (video=1, audio=2, etc.). The mapping is signaled in the catalog.
 
 ### 4.2. Object Payload
 
