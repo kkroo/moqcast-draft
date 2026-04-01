@@ -28,14 +28,10 @@
       the format of repair objects.  The mechanism supports RaptorQ
       (RFC 6330), Reed-Solomon (RFC 5510), and XOR-based FEC schemes,
       enabling receivers to recover from packet loss without
-      retransmission latency.  A repair container abstraction allows
-      repair objects to carry either condensed-framed symbols or
-      container-specific payloads (e.g., MMTP repair packets), enabling
-      multi-path FEC delivery where receivers apply identical recovery
-      logic regardless of whether data arrives via MoQ/QUIC, SSM
-      multicast, or ATSC 3.0 broadcast.  This specification is designed
-      for compatibility with ATSC 3.0 (A/331) and ARIB STD-B60 broadcast
-      systems.</t>
+      retransmission latency.  This specification is designed for MoQ
+      unicast delivery over QUIC streams and datagrams.  Multicast
+      delivery of FEC-protected media is defined separately in
+      <xref target="I-D.ramadan-moq-multicast"/>.</t>
     </abstract>
   </front>
 
@@ -66,17 +62,19 @@
         <li>A catalog extension for FEC parameter signaling</li>
         <li>A naming convention for repair tracks</li>
         <li>The format of repair objects containing FEC symbols</li>
+        <li>A MoQ extension header for FEC source block identification</li>
         <li>Interleaving strategies to protect against burst loss</li>
-        <li>Compatibility mappings for ATSC 3.0 and ARIB STD-B60 broadcast systems</li>
-        <li>Multi-path delivery where FEC symbols arrive from multiple transport
-        paths (MoQ/QUIC, SSM multicast, ATSC 3.0 broadcast) with identical
-        recovery at the receiver</li>
       </ol>
 
       <t>The mechanism is designed to complement existing MoQ media packaging
       formats including CMAF <xref target="I-D.ietf-moq-cmsf"/>, LOC
       <xref target="I-D.ietf-moq-loc"/>, and MMT <xref target="I-D.ramadan-moq-mmt"/>
       by operating as a separate protection layer.</t>
+
+      <t>This document addresses MoQ unicast delivery over QUIC.  Multicast
+      delivery of FEC-protected media, including the condensed multicast
+      packet format and multi-path FEC, is defined in
+      <xref target="I-D.ramadan-moq-multicast"/>.</t>
     </section>
 
     <!-- Section 2 -->
@@ -227,7 +225,7 @@ Reed-Solomon OTI {
   "tracks": [
     {
       "name": "video",
-      "packaging": "mmtp",
+      "packaging": "loc",
       "selectionParams": {
         "codec": "avc1.64001f",
         "width": 1920,
@@ -246,7 +244,7 @@ Reed-Solomon OTI {
     },
     {
       "name": "video/repair",
-      "packaging": "mmtp"
+      "packaging": "condensed"
     }
   ]
 }
@@ -254,8 +252,9 @@ Reed-Solomon OTI {
 
         <t>The repair track is a regular catalog track whose packaging field
         indicates the repair object format (<xref target="sec-repair-format-selection"/>).  In this example,
-        both source and repair use mmtp packaging -- the MMTP type 0x03
-        repair packet format carries FEC Payload ID and OTI natively.</t>
+        the source uses LOC packaging and the repair uses condensed packaging
+        -- repair objects contain raw repair symbols with SBN/ESI derived from
+        MoQ transport framing.</t>
 
         <t>Field definitions for the <tt>fec</tt> object:</t>
 
@@ -374,6 +373,9 @@ ESI = K + object_id
         convention: object_id 0 on the repair track corresponds to ESI K,
         object_id 1 to ESI K+1, and so on up to object_id P-1 (ESI K+P-1).</t>
 
+        <t>Publishers MUST use zero-based, monotonically-increasing group_id
+        values on FEC-enabled tracks so that the SBN derivation is valid.</t>
+
         <section anchor="sec-repair-group-structure">
           <name>Repair Track Group Structure</name>
           <t>Publishers MUST structure repair tracks so that group_id equals
@@ -384,7 +386,7 @@ ESI = K + object_id
           regardless of the source track's container format (LOC, CMAF, etc.).</t>
 
           <t>This convention holds for all container modes.  While CMAF source
-          objects require explicit FEC Payload ID extensions (<xref target="sec-fec-pid-ext"/>)
+          objects require explicit FEC Source Info extensions (<xref target="sec-fec-source-info-ext"/>)
           because CMAF chunks do not map 1:1 to source symbols, repair
           objects ARE 1:1 with symbols (each object = one T-byte repair
           symbol), so the derivation is valid.</t>
@@ -422,136 +424,19 @@ SBN = floor(group_id / interleave_depth)
 ESI = K + object_id
 ]]></artwork>
 
-        <t>LOC repair objects MAY include an Auth Tag extension header
-        <xref target="I-D.ietf-moq-loc"/> for per-symbol authentication.  No FEC-specific
-        extension headers are needed.</t>
-      </section>
-
-      <section anchor="sec-multicast-wire-format">
-        <name>Multicast Wire Format</name>
-        <t>For packaging types without a native multicast framing (LOC, CMAF),
-        source and repair symbols are delivered over IP multicast (SSM/ASM)
-        using the condensed multicast packet format defined in this section.
-        MMTP packets are self-describing and use native MMTP framing on
-        multicast per <xref target="I-D.ramadan-moq-mmt"/> Section 7.</t>
-
-        <t>Each UDP datagram carries one condensed multicast packet containing
-        either one source symbol (Flags bit 0 = 0) or one repair symbol
-        (Flags bit 0 = 1).  The format provides track demuxing (Track ID),
-        FEC metadata (SBN/ESI), random access signaling (RAP flag), optional
-        timestamps, and optional authentication -- all catalog-driven.</t>
-
-        <artwork type="ascii-art"><![CDATA[
-Condensed Multicast Packet {
-  Track ID (16),              // 2 bytes -- catalog-assigned per-track ID
-  Flags (8),                  // 1 byte -- see below
-  Source Block Number (24),   // 3 bytes -- SBN (wraps at ~16M blocks)
-  Encoding Symbol ID (8),    // 1 byte -- ESI (max 255 symbols/block)
-  Auth Length (8),            // 1 byte -- 0=no auth, else tag size
-  [Timestamp (32)],           // 4 bytes -- NTP-short, if Flags bit 2 = 1
-  Payload (..),               // Source symbol or repair symbol
-  [Auth Tag (Auth Length)],   // Variable-length (HMAC, ALTA, etc.)
-}
-]]></artwork>
-
-        <dl>
-          <dt>Track ID (16 bits)</dt>
-          <dd>Identifies the media track for packet routing (analogous to MMTP
-          packet_id).  The value corresponds to the <tt>id</tt> field assigned to
-          each track in the multicast catalog endpoint
-          (<xref target="I-D.ramadan-moq-multicast"/> Section 4.1).  Publishers MUST use
-          consistent Track ID values across all packets for a given track.</dd>
-
-          <dt>Flags (8 bits)</dt>
-          <dd>Bit field:
-          <ul>
-            <li>Bit 0: Repair (0=source, 1=repair)</li>
-            <li>Bit 1: RAP (0=delta frame, 1=keyframe/random access point)</li>
-            <li>Bit 2: Timestamp (0=absent, 1=32-bit NTP-short follows header)</li>
-            <li>Bits 3-7: Reserved (MUST be 0, receivers MUST ignore)</li>
-          </ul></dd>
-
-          <dt>Timestamp (32 bits, OPTIONAL)</dt>
-          <dd>Present when Flags bit 2 is set.  NTP short format (16-bit seconds +
-          16-bit fractional seconds).  RECOMMENDED for LOC source packets where
-          in-band timestamps are not available.  Not needed for CMAF (timestamps
-          in moof box) or repair symbols.  When present, the fixed header is 12
-          bytes instead of 8.</dd>
-
-          <dt>SBN (24 bits)</dt>
-          <dd>Source Block Number.  Wraps at ~16M blocks (~25 days at 30fps depth=4).</dd>
-
-          <dt>ESI (8 bits)</dt>
-          <dd>Encoding Symbol ID.  Source: ESI &lt; K.  Repair: ESI &gt;= K.  Max 255 symbols/block.</dd>
-
-          <dt>Auth Length (8 bits)</dt>
-          <dd>Auth tag length in bytes.  0 = no auth.  Max 255, sufficient for
-          HMAC-SHA256 (32), Ed25519 (64), and ALTA variable-length tags.</dd>
-
-          <dt>Payload</dt>
-          <dd>Source chunk data or repair symbol (Symbol Size bytes).</dd>
-
-          <dt>Auth Tag (Auth Length bytes)</dt>
-          <dd>Scheme-specific tag (HMAC, ALTA, etc.) as declared in catalog.</dd>
-        </dl>
-
-        <t>Fixed overhead: 8 bytes without timestamp, 12 bytes with timestamp
-        (vs MMTP 33 bytes, LOC ~14+ bytes).</t>
-
-        <t>Limitation: The 8-bit ESI field limits blocks to 255 symbols (e.g.,
-        K=247 source + P=8 repair). For broadcast deployments requiring larger
-        blocks (K&gt;247), the MMTP repair format (<xref target="sec-mmtp-container"/>)
-        or LOC repair format (<xref target="sec-loc-repair"/>) SHOULD be used instead.</t>
-
-        <t>The 24-bit SBN wraps at 16,777,216 blocks. At 60fps with interleave
-        depth 1, this wraps in ~3.2 days. At 30fps with depth 4, ~25 days.
-        Publishers SHOULD reset SBN on stream restart.</t>
-
-        <t>Each (sourceAddress, groupAddress, port) multicast tuple MUST
-        be associated with at most one MoQ namespace.  Publishers
-        requiring multiple streams MUST use distinct multicast groups
-        or ports.  See <xref target="I-D.ramadan-moq-multicast"/> Section 4.1.</t>
-
-        <section anchor="sec-source-symbol-multicast">
-          <name>Source Symbol Delivery on Multicast</name>
-          <t>On multicast, media frames or chunks that exceed T bytes are
-          fragmented into T-byte source symbols by the FEC encoder before
-          transmission.  Each source symbol is carried in one UDP datagram
-          with a condensed header (Flags bit 0 = 0).</t>
-
-          <t>Source payloads MAY be smaller than T bytes (e.g., the last
-          symbol of a frame, or small audio frames).  Receivers determine
-          the actual payload size from the UDP datagram length:</t>
-
-          <artwork type="ascii-art"><![CDATA[
-payload_size = datagram_length - header_size - Auth_Length
-]]></artwork>
-
-          <t>where header_size is 8 bytes (Flags bit 2 = 0) or 12 bytes
-          (Flags bit 2 = 1).  Receivers pad source payloads to T bytes
-          with zeros for FEC decoding.</t>
-
-          <t>For MMTP-packaged tracks, multicast delivery uses native MMTP
-          packets (not condensed framing) per <xref target="I-D.ramadan-moq-mmt"/>.</t>
-
-          <t>On the MoQ unicast path, condensed packaging uses the headerless
-          format (<xref target="sec-condensed-repair"/>) with SBN/ESI derived from MoQ
-          transport framing.  The multicast wire format in this section applies
-          only to UDP delivery.</t>
-        </section>
+        <t>No FEC-specific extension headers are needed on repair objects.</t>
       </section>
     </section>
 
     <!-- Section 7 -->
     <section anchor="sec-extensions">
-      <name>MoQ Extension Headers for FEC</name>
-      <t>This section defines MoQ transport extension headers used by FEC-enabled
-      streams.  These extensions use the MoQ transport extension header
-      mechanism defined in <xref target="I-D.ietf-moq-transport"/>.  Each extension is
-      self-describing (type + length).  Presence is determined by the
-      catalog -- no per-object flags byte is needed.</t>
+      <name>MoQ Extension Header for FEC</name>
+      <t>This section defines a single MoQ transport extension header used by
+      FEC-enabled streams.  This extension uses the MoQ transport extension
+      header mechanism defined in <xref target="I-D.ietf-moq-transport"/>.  Presence is
+      determined by the catalog -- no per-object flags byte is needed.</t>
 
-      <t>These extensions are NOT needed when each MoQ object contains
+      <t>This extension is NOT needed when each MoQ object contains
       exactly one source symbol (object payload &lt;= T bytes).  This
       applies to:</t>
 
@@ -563,7 +448,7 @@ payload_size = datagram_length - header_size - Auth_Length
         from framing per <xref target="sec-condensed-repair"/>)</li>
       </ul>
 
-      <t>These extensions ARE REQUIRED when a single MoQ object spans
+      <t>This extension IS REQUIRED when a single MoQ object spans
       multiple source symbols (object payload &gt; T bytes).  This
       applies to:</t>
 
@@ -574,79 +459,41 @@ payload_size = datagram_length - header_size - Auth_Length
 
       <t>The receiver determines which model applies from the catalog:
       if the track's media type produces objects larger than symbolSize,
-      the FEC Payload ID extension (<xref target="sec-fec-pid-ext"/>) and Object Length
-      extension (<xref target="sec-obj-length-ext"/>) MUST be present on source objects.</t>
+      the FEC Source Info extension MUST be present on source objects.</t>
 
       <t>For CMAF packaging <xref target="I-D.ietf-moq-cmsf"/>, the concatenated byte
       stream of chunk payloads (moof+mdat) within a source block is
-      divided into T-byte source symbols.  The FEC Payload ID on each
-      CMAF source object identifies the first ESI of that chunk, and
-      Object Length carries the original chunk size for zero-pad
-      stripping.  The source track uses CMAF packaging; the repair
-      track uses condensed packaging.</t>
+      divided into T-byte source symbols.  The FEC Source Info on each
+      CMAF source object identifies the first ESI of that chunk and
+      optionally carries the original chunk size for zero-pad stripping.</t>
 
-      <section anchor="sec-fec-pid-ext">
-        <name>FEC Payload ID Extension</name>
+      <section anchor="sec-fec-source-info-ext">
+        <name>FEC Source Info Extension</name>
 
         <artwork type="ascii-art"><![CDATA[
-FEC Payload ID Extension {
+FEC Source Info Extension {
   Extension Type (i) = 0xNN,
-  Length (i) = 8,
+  Length (i),                      // 8 or 8 + varint_size
   Source Block Number (32),
   Encoding Symbol ID (32),
+  [Original Object Length (i)],    // Present when Length > 8
 }
 ]]></artwork>
 
-        <t>The FEC Payload ID extension carries the combined Source Block Number
-        (SBN, 32 bits) and Encoding Symbol ID (ESI, 32 bits) for a total of
-        8 bytes.</t>
-      </section>
+        <t>The FEC Source Info extension carries the Source Block Number
+        (SBN, 32 bits) and Encoding Symbol ID (ESI, 32 bits) for a total
+        of 8 bytes minimum.</t>
 
-      <section anchor="sec-obj-length-ext">
-        <name>Object Length Extension</name>
+        <t>When Length &gt; 8, the remaining bytes contain the Original Object
+        Length as a QUIC variable-length integer (1-8 bytes, per <xref target="RFC9000"/>
+        Section 16).  The receiver uses this to strip zero-padding from
+        the last FEC source symbol of the object.</t>
 
-        <artwork type="ascii-art"><![CDATA[
-Object Length Extension {
-  Extension Type (i) = 0xNN,
-  Length (i),
-  Original Object Length (i),
-}
-]]></artwork>
-
-        <t>The Object Length extension carries the original object size as a
-        QUIC variable-length integer (1-8 bytes, per <xref target="RFC9000"/> Section 16).
-        The encoding is self-describing: the two most significant bits of
-        the first byte indicate the field width.  The receiver needs the
-        original object size to strip zero-padding from the last FEC source
-        symbol.</t>
-      </section>
-
-      <section anchor="sec-auth-tag-ext">
-        <name>Auth Tag Extension</name>
-
-        <artwork type="ascii-art"><![CDATA[
-Auth Tag Extension {
-  Extension Type (i) = 0xNN,
-  Length (i) = N,
-  Auth Tag (N),
-}
-]]></artwork>
-
-        <t>The Auth Tag extension carries an authentication tag whose length
-        is given by the MoQ extension Length field.  Tag size may be fixed
-        (HMAC-SHA256: always 32 bytes) or variable (ALTA
-        <xref target="I-D.krose-mboned-alta"/>: varies per packet depending on MAC chain
-        depth and signature presence).  The catalog declares the auth
-        scheme and key distribution mechanism; the per-object Length field
-        carries the actual tag size.</t>
-
-        <t>This extension is OPTIONAL on LOC source and repair track objects.
-        MMTP tracks use MMTP-native authentication.  Condensed multicast
-        packets carry auth via the Auth Length field (<xref target="sec-multicast-wire-format"/>).</t>
-
-        <t>The Auth Tag provides end-to-end content authentication across
-        untrusted relays -- receivers verify that content originated from
-        the publisher regardless of relay hops (see <xref target="sec-security"/>).</t>
+        <t>Publishers SHOULD include the Original Object Length for clean
+        transport-layer object boundary detection.  Publishers MAY omit
+        it (Length = 8) when the media format provides reliable in-band
+        framing (e.g., ISOBMFF box headers for CMAF, NAL unit length
+        prefixes for LOC/AVCC).</t>
       </section>
     </section>
 
@@ -692,28 +539,15 @@ Auth Tag Extension {
 
       <t>Under congestion, this separation ensures source media is preserved
       while repair overhead is gracefully shed.</t>
+
+      <t>When using the Datagram forwarding preference per
+      <xref target="I-D.ietf-moq-transport"/>, QUIC datagrams lack stream-level priority.
+      MoQ implementations SHOULD implement application-level scheduling
+      that respects the priority model above when multiplexing source and
+      repair datagrams.</t>
     </section>
 
     <!-- Section 10 -->
-    <section anchor="sec-multipath">
-      <name>Multi-Path FEC Delivery</name>
-      <t>The same MoQ objects (source and repair) can be transmitted over
-      both unicast (QUIC/WebTransport) and multicast (UDP/SSM/AMT) paths
-      per <xref target="I-D.ramadan-moq-multicast"/>.  Receivers on reliable unicast
-      paths MAY skip FEC decoding; receivers on lossy multicast paths
-      use FEC for recovery.</t>
-
-      <t>When symbols arrive from multiple paths simultaneously, receivers:</t>
-
-      <ol>
-        <li>MUST deduplicate symbols using SBN+ESI as the unique key</li>
-        <li>SHOULD use the same repair container format across all paths</li>
-        <li>MAY combine source from reliable MoQ/QUIC with repair from
-        lossy multicast -- skipping FEC when all source symbols arrive</li>
-      </ol>
-    </section>
-
-    <!-- Section 11 -->
     <section anchor="sec-security">
       <name>Security Considerations</name>
       <t>FEC does not provide confidentiality -- it operates on whatever data
@@ -723,15 +557,13 @@ Auth Tag Extension {
       be limited to reasonable values (e.g., &lt;= 50%) to prevent bandwidth
       amplification.</t>
 
-      <t>When FEC is used over multicast (SSM/AMT), multicast UDP lacks
-      QUIC's integrity guarantees.  Receivers SHOULD verify decoded media
-      structure to detect repair injection attacks.  Additional multicast
-      security considerations (source authentication, replay protection,
-      AMT relay trust) are defined in <xref target="I-D.ramadan-moq-multicast"/>
-      Section 6.</t>
+      <t>End-to-end content authentication on MoQ unicast MAY be provided by
+      Secure Objects <xref target="SecureObjects"/> which provides object-level encryption
+      and authentication.  For multicast delivery, authentication mechanisms
+      are defined in <xref target="I-D.ramadan-moq-multicast"/> Section 6.</t>
     </section>
 
-    <!-- Section 12 -->
+    <!-- Section 11 -->
     <section anchor="sec-iana">
       <name>IANA Considerations</name>
 
@@ -771,16 +603,11 @@ Auth Tag Extension {
           </tbody>
         </table>
 
-        <t>The "condensed" packaging is used for:</t>
-        <ul>
-          <li>Repair tracks paired with CMAF or LOC source tracks, where the
-          source packaging does not have native FEC repair framing.  Each
-          MoQ object contains one raw repair symbol with SBN/ESI derived
-          from MoQ transport framing (<xref target="sec-condensed-repair"/>).</li>
-          <li>Multicast delivery of LOC and CMAF source and repair symbols,
-          where each UDP datagram carries one condensed multicast packet
-          (<xref target="sec-multicast-wire-format"/>).</li>
-        </ul>
+        <t>The "condensed" packaging is used for repair tracks paired with
+        CMAF or LOC source tracks, where the source packaging does not
+        have native FEC repair framing.  Each MoQ object contains one raw
+        repair symbol with SBN/ESI derived from MoQ transport framing
+        (<xref target="sec-condensed-repair"/>).</t>
 
         <t>Note: The "mmtp" packaging value is registered by
         <xref target="I-D.ramadan-moq-mmt"/>.  The "loc" packaging value is registered by
@@ -791,7 +618,7 @@ Auth Tag Extension {
       <section anchor="sec-iana-obj-ext">
         <name>MoQ Object Extension Header Types</name>
         <t>This document requests registration of the following MoQ object
-        extension header types in the "MoQ Extension Header Types" registry
+        extension header type in the "MoQ Extension Header Types" registry
         (note: these are object-level extensions per <xref target="I-D.ietf-moq-transport"/>):</t>
 
         <table>
@@ -799,16 +626,14 @@ Auth Tag Extension {
             <tr><th>Type</th><th>Name</th><th>Reference</th></tr>
           </thead>
           <tbody>
-            <tr><td>0xNN</td><td>FEC Payload ID</td><td>This document, <xref target="sec-fec-pid-ext"/></td></tr>
-            <tr><td>0xNN</td><td>Object Length</td><td>This document, <xref target="sec-obj-length-ext"/></td></tr>
-            <tr><td>0xNN</td><td>Auth Tag</td><td>This document, <xref target="sec-auth-tag-ext"/></td></tr>
+            <tr><td>0xNN</td><td>FEC Source Info</td><td>This document, <xref target="sec-fec-source-info-ext"/></td></tr>
           </tbody>
         </table>
 
-        <t>Note: The values 0xNN are placeholders.  Actual values are to be
+        <t>Note: The value 0xNN is a placeholder.  Actual value is to be
         assigned in coordination with the MOQ WG.  Implementations SHOULD
-        use values in the experimental range until IANA allocation is
-        confirmed.</t>
+        use a value in the experimental range (0x38-0x3F for 1-byte encoding)
+        until IANA allocation is confirmed.</t>
       </section>
     </section>
 
@@ -945,53 +770,12 @@ Auth Tag Extension {
           <seriesInfo name="Internet-Draft" value="draft-ramadan-moq-multicast"/>
         </reference>
 
-        <reference anchor="I-D.krose-mboned-alta">
+        <reference anchor="SecureObjects">
           <front>
-            <title>Authentication for Low-overhead Transport of Attestations</title>
-            <author initials="K." surname="Rose" fullname="Kyle Rose"/>
+            <title>Secure Objects for Media over QUIC</title>
+            <author><organization>IETF MOQ WG</organization></author>
             <date year="2026"/>
           </front>
-          <seriesInfo name="Internet-Draft" value="draft-krose-mboned-alta"/>
-        </reference>
-
-        <reference anchor="RFC4607">
-          <front>
-            <title>Source-Specific Multicast for IP</title>
-            <author initials="H." surname="Holbrook" fullname="Hugh Holbrook"/>
-            <author initials="B." surname="Cain" fullname="Brad Cain"/>
-            <date month="August" year="2006"/>
-          </front>
-          <seriesInfo name="RFC" value="4607"/>
-          <seriesInfo name="DOI" value="10.17487/RFC4607"/>
-        </reference>
-
-        <reference anchor="RFC7450">
-          <front>
-            <title>Automatic Multicast Tunneling</title>
-            <author initials="G." surname="Bumgardner" fullname="Greg Bumgardner"/>
-            <date month="February" year="2015"/>
-          </front>
-          <seriesInfo name="RFC" value="7450"/>
-          <seriesInfo name="DOI" value="10.17487/RFC7450"/>
-        </reference>
-
-        <reference anchor="RFC8777">
-          <front>
-            <title>DNS Reverse IP Automatic Multicast Tunneling (AMT) Discovery</title>
-            <author initials="J." surname="Holland" fullname="Jake Holland"/>
-            <date month="April" year="2020"/>
-          </front>
-          <seriesInfo name="RFC" value="8777"/>
-          <seriesInfo name="DOI" value="10.17487/RFC8777"/>
-        </reference>
-
-        <reference anchor="RFC9706">
-          <front>
-            <title>TreeDN: Tree-Based Content Delivery Network (CDN) for Live Streaming to Mass Audiences</title>
-            <author initials="J." surname="Holland" fullname="Jake Holland"/>
-            <date month="December" year="2024"/>
-          </front>
-          <seriesInfo name="RFC" value="9706"/>
         </reference>
 
         <reference anchor="ATSC-A331">
@@ -1046,8 +830,7 @@ Auth Tag Extension {
       <section anchor="sec-overhead">
         <name>Per-Object Overhead Comparison</name>
         <t>The following table compares per-object FEC signaling overhead across
-        container formats.  "MoQ Extensions (CMAF+FEC)" uses the extension
-        headers defined in <xref target="sec-extensions"/>.</t>
+        container formats on MoQ unicast.</t>
 
         <table>
           <thead>
@@ -1055,22 +838,22 @@ Auth Tag Extension {
           </thead>
           <tbody>
             <tr><td>LOC audio source</td><td>0 bytes</td><td>Audio frames &lt;= T; SBN/ESI derived from MoQ coordinates</td></tr>
-            <tr><td>LOC video source</td><td>9-12 bytes</td><td>Video frames &gt;&gt; T; FEC Payload ID (8) + Object Length (1-4)</td></tr>
-            <tr><td>LOC source + auth</td><td>+N bytes</td><td>Add Auth Tag extension (N from catalog)</td></tr>
-            <tr><td>Condensed (0x00), repair</td><td>0 bytes (no auth)</td><td>Raw symbol payload, SBN/ESI derived (<xref target="sec-repair-group-structure"/>)</td></tr>
-            <tr><td>Condensed (0x00), repair + auth</td><td>N bytes</td><td>Raw symbol payload + Auth Tag extension</td></tr>
-            <tr><td>MoQ Extensions (CMAF+FEC)</td><td>9-12 bytes</td><td>FEC Payload ID (8) + Object Length (1-4 varint)</td></tr>
-            <tr><td>MoQ Extensions (CMAF+FEC+auth)</td><td>9+N - 12+N bytes</td><td>FEC PID + Object Length + Auth Tag</td></tr>
-            <tr><td>MMTP (0x01)</td><td>33 bytes</td><td>MMTP Header (12) + FEC Payload ID (9) + OTI (12)</td></tr>
+            <tr><td>LOC video source</td><td>8 bytes</td><td>Video frames &gt;&gt; T; FEC Source Info (SBN+ESI)</td></tr>
+            <tr><td>LOC video source + length</td><td>9-12 bytes</td><td>FEC Source Info with optional Object Length</td></tr>
+            <tr><td>Condensed repair</td><td>0 bytes</td><td>Raw symbol payload, SBN/ESI derived (<xref target="sec-repair-group-structure"/>)</td></tr>
+            <tr><td>CMAF source</td><td>8 bytes</td><td>FEC Source Info (SBN+ESI)</td></tr>
+            <tr><td>CMAF source + length</td><td>9-12 bytes</td><td>FEC Source Info with optional Object Length</td></tr>
+            <tr><td>MMTP</td><td>33 bytes</td><td>MMTP Header (12) + FEC Payload ID (9) + OTI (12)</td></tr>
           </tbody>
         </table>
 
         <t>LOC audio and condensed repair formats derive SBN/ESI from MoQ
         coordinates (zero FEC overhead).  LOC video and CMAF source objects
-        require explicit FEC Payload ID and Object Length extensions (9-12
-        bytes) because media objects exceed the symbol size T.  MMTP carries
-        full per-packet OTI (33 bytes) for self-describing operation and
-        ATSC 3.0 compatibility.</t>
+        require explicit FEC Source Info extensions (8 bytes minimum) because
+        media objects exceed the symbol size T.  The optional Object Length
+        field adds 1-4 bytes for transport-layer zero-pad stripping.  MMTP
+        carries full per-packet OTI (33 bytes) for self-describing operation
+        and ATSC 3.0 compatibility.</t>
       </section>
     </section>
 
@@ -1138,9 +921,7 @@ MoQ Object Payload (packaging: "mmtp") {
       <section anchor="sec-mmtp-receiver">
         <name>Receiver Processing</name>
         <t>The receiver extracts FEC parameters by reading at fixed byte
-        offsets.  This requires one branch on the repair container type
-        (determined at subscription time from the catalog), then fixed-offset
-        integer reads and a memcpy of symbol data:</t>
+        offsets:</t>
 
         <artwork type="ascii-art"><![CDATA[
 offset 0:   MMTP Header (12 bytes) -- skip
