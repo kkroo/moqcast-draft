@@ -42,13 +42,10 @@ Table of Contents
    5.  Media Fragment Unit (MFU) Mode
        5.1.  MFU Fragmentation
    6.  FEC Integration
-       6.1.  Interleaving
-       6.2.  OTI Signaling
    7.  Multicast Integration
    8.  ARIB STD-B60 Compatibility
    9.  Catalog Signaling
        9.1.  Packaging Registration
-       9.2.  Multicast Endpoint Catalog Extension
    10. Security Considerations
        10.1. Multicast Security
    11. IANA Considerations
@@ -93,21 +90,10 @@ This specification complements existing MoQ packaging formats:
 
 | Format | Container | Primary Use Case | FEC Support |
 |--------|-----------|------------------|-------------|
-| MSF (LOC) | WebCodecs chunks | Low-latency unicast | No |
-| CMSF | CMAF fMP4 | Adaptive streaming | No |
-| CARP | CMAF fMP4 | ABR delivery | No |
-| This spec (MMT) | MMTP + MPU (ISOBMFF) | Broadcast bridge | Yes |
-
-MMT packaging is RECOMMENDED when:
-- Ingesting ATSC 3.0 or ARIB STD-B60 broadcasts
-- FEC protection is required for multicast delivery
-- Hybrid broadcast/unicast architectures are deployed
-- Interoperability with broadcast receivers is needed
-
-CMAF packaging (CMSF/CARP) is RECOMMENDED when:
-- Content originates as DASH/HLS
-- No multicast delivery is planned
-- Interoperability with existing CDN infrastructure is needed
+| MSF (LOC) | WebCodecs chunks | Low-latency unicast | Via [I-D.ramadan-moq-fec] |
+| CMSF | CMAF fMP4 | Adaptive streaming | Via [I-D.ramadan-moq-fec] |
+| CARP | CMAF fMP4 | ABR delivery | Via [I-D.ramadan-moq-fec] |
+| This spec (MMT) | MMTP + MPU (ISOBMFF) | Broadcast bridge | Native + [I-D.ramadan-moq-fec] |
 
 ## 2. Terminology
 
@@ -224,8 +210,10 @@ headers for this information.
 
 For MoQ unicast delivery without ATSC 3.0/ARIB interoperability
 requirements, LOC [I-D.ietf-moq-loc] with MoQ extension headers is
-RECOMMENDED over full MMTP encapsulation.  LOC eliminates ~30 bytes
-of per-object MMTP overhead that is redundant over MoQ (packet_id,
+RECOMMENDED over full MMTP encapsulation.  LOC eliminates 33 bytes
+of per-object MMTP overhead (12-byte header + 9-byte FEC Payload
+ID + 12-byte OTI for repair packets, per [I-D.ramadan-moq-fec]
+Appendix C) that is redundant over MoQ (packet_id,
 timestamp, sequence_number, MPU fields, MFU DU header are all
 provided by MoQ transport framing and LOC extensions).  MMTP
 encapsulation (container value 'mmtp') is RECOMMENDED when
@@ -302,66 +290,17 @@ Number before media processing.  The MMTP fragmentation is transparent
 to MoQ; each MoQ object represents a complete, potentially multi-packet
 MFU.
 
-For very large frames (e.g., 8K I-frames), consider:
-- Using QUIC's stream-based reliable delivery
-- Increasing QUIC max datagram size
-- Fragmenting at the MoQ object level with object dependencies
-
 ## 6. FEC Integration
 
-MMT's AL-FEC framework supports multiple FEC schemes including
-RaptorQ [RFC6330], LDPC [RFC5170], and Reed-Solomon [RFC5510],
-with parameters signaled via MMTP signaling messages or, in
-ATSC 3.0, via S-TSID (which is part of the ROUTE transport layer).
-For MoQ, FEC repair uses the model defined in
-[I-D.ramadan-moq-fec]:
-
-```
-Source Track: video
-  └── Objects: MMTP packets with FEC Type=0 or 1 (source)
-
-Repair Track: video/repair
-  └── Objects: MMTP packets with FEC Type=2 (repair, passthrough)
-```
-
-When using MMT packaging, the repair track also uses "mmtp"
+When using MMT packaging, both source and repair tracks use "mmtp"
 packaging.  Repair track objects carry raw MMTP repair packets
-(type 0x03) without modification per [I-D.ramadan-moq-fec]
-Appendix C.  MoQ relays pass MMTP repair packets through as-is —
-no header stripping, no re-framing, no re-encoding.
+(FEC Type=2) without modification per [I-D.ramadan-moq-fec]
+Appendix C.  MoQ relays pass MMTP repair packets through as-is.
 
-This passthrough design enables multi-path FEC delivery: the same
-MMTP repair packets are delivered identically via ATSC 3.0 RF
-broadcast, SSM multicast, and MoQ CDN.  Receivers implement one
-MMTP parser for both source and repair tracks, extracting SBN, ESI,
-and OTI from the standard MMTP FEC Payload ID fields.  See
-[I-D.ramadan-moq-fec] Appendix C for the byte-offset extraction
-recipe.
-
-Note: AL-FEC is essential on SSM/AMT multicast paths where there is
-no retransmission.  On MoQ/QUIC paths, FEC reduces retransmission
-latency but QUIC provides a reliable fallback.
-
-### 6.1. Interleaving
-
-MMT AL-FEC interleaves source symbols across multiple MFUs:
-
-```
-MFU:        0    1    2    3    4    5    6    7
-            │    │    │    │    │    │    │    │
-Block 0:    S0   S1   S2   S3   ─────────────────►  R0, R1
-Block 1:                        S4   S5   S6   S7 ► R2, R3
-```
-
-Default interleave depth varies by application:
-- ATSC 3.0: 30-60 frames (~1-2 seconds at 30fps)
-- ARIB STD-B60: 60 frames (~2 seconds at 30fps)
-- Low-latency: 4-8 frames (~130-270ms at 30fps)
-
-### 6.2. OTI Signaling
-
-For MoQ, FEC parameters including OTI are signaled via catalog per
-[I-D.ramadan-moq-fec] Section 5.
+This passthrough design enables multi-path FEC delivery: identical
+MMTP repair packets across ATSC 3.0 RF, SSM multicast, and MoQ CDN.
+FEC parameters and OTI are signaled via the catalog per
+[I-D.ramadan-moq-fec] Section 4.
 
 ## 7. Multicast Integration
 
@@ -379,23 +318,10 @@ native delivery path and requires no protocol translation.
 
 ## 8. ARIB STD-B60 Compatibility
 
-ARIB STD-B60 (Japan's MMT-based broadcasting standard) uses the
-same ISO 23008-1 foundation as ATSC 3.0 with the following specific
-considerations for clock reference mapping.
-
-ARIB STD-B60 uses UTC wallclock timestamps in NTP short format,
-consistent with ISO 23008-1.  The MMTP Timestamp field carries the
-UTC send time of the packet, which maps to MoQ object timestamps.
-
-The MMTP Timestamp uses NTP short format (32-bit: 16-bit seconds +
-16-bit fractional seconds relative to NTP epoch):
-
-```
-MoQ Timestamp (seconds) = MMTP Timestamp upper 16 bits
-                          + (lower 16 bits / 65536)
-```
-
-Note: This differs from MPEG-2 TS, which uses a 90kHz PTS/DTS clock.
+ARIB STD-B60 (Japan) uses the same ISO 23008-1 foundation as
+ATSC 3.0.  MMTP Timestamps use NTP short format (32-bit: 16-bit
+seconds + 16-bit fractional), mapping directly to MoQ object
+timestamps.
 
 ## 9. Catalog Signaling
 
@@ -445,14 +371,8 @@ types (mmtp, loc, cmaf), each is a separate track in the catalog.
 The subscriber chooses which packaging to subscribe to based on
 its capabilities.
 
-### 9.2. Multicast Endpoint Catalog Extension
-
-The multicast catalog extension — including endpoint format — is
-defined in [I-D.ramadan-moq-multicast] Section 7.
-
-When ATSC 3.0 content is ingested into MoQ, the `multicast` field
-in the catalog SHOULD conform to the format defined in
-[I-D.ramadan-moq-multicast] Section 7.
+The multicast catalog extension is defined in
+[I-D.ramadan-moq-multicast] Section 4.
 
 ## 10. Security Considerations
 
@@ -465,7 +385,7 @@ accessing media content.
 
 Multicast-specific security considerations (source authentication,
 replay protection, AMT relay trust) are defined in
-[I-D.ramadan-moq-multicast] Section 8.
+[I-D.ramadan-moq-multicast] Section 6.
 
 ## 11. IANA Considerations
 

@@ -44,20 +44,19 @@ Table of Contents
    1.  Introduction
    2.  Terminology
    3.  Delivery Paths
-   4.  Transport Hierarchy
-   5.  Multicast Catalog Extension
-       5.1.  Multicast Endpoint Format
-       5.2.  Network Source Types
-             5.2.1.  AMT (Automatic Multicast Tunneling)
-             5.2.2.  ATSC 3.0 (Broadcast Television)
-             5.2.3.  Multiple Network Sources
-   6.  Multicast Packet Formats
-   7.  Security Considerations
-       7.1.  Multicast Security
-   8.  IANA Considerations
-   9.  References
-       9.1.  Normative References
-       9.2.  Informative References
+   4.  Multicast Catalog Extension
+       4.1.  Multicast Endpoint Format
+       4.2.  Network Source Types
+             4.2.1.  AMT (Automatic Multicast Tunneling)
+             4.2.2.  ATSC 3.0 (Broadcast Television)
+             4.2.3.  Multiple Network Sources
+   5.  Multicast Packet Formats
+   6.  Security Considerations
+       6.1.  Multicast Security
+   7.  IANA Considerations
+   8.  References
+       8.1.  Normative References
+       8.2.  Informative References
    Authors' Addresses
 ```
 
@@ -131,20 +130,16 @@ natively over RF tuner hardware.  MoQ integration occurs at the
 gateway/head-end level via TreeDN [RFC9706] and AMT [RFC7450] /
 DRIAD [RFC8777].
 
-## 4. Transport Hierarchy
+Multiple transports MAY be available for a given stream.  Applications
+select transports based on availability and local policy.
 
-Multiple transports MAY be available for a given stream.  The catalog
-signals which transports are offered via the multicast endpoint format
-(Section 5) and standard MoQ subscription.  Applications select
-transports based on availability and local policy.
-
-## 5. Multicast Catalog Extension
+## 4. Multicast Catalog Extension
 
 For tracks available via multicast, the MoQ catalog includes a
 top-level `multicast` field containing an `endpoints` array for
 endpoint discovery.
 
-### 5.1. Multicast Endpoint Format
+### 4.1. Multicast Endpoint Format
 
 The `multicast` field is a catalog extension per
 [I-D.ietf-moq-catalogformat] Section 3.1.  Parsers that do not
@@ -161,7 +156,12 @@ one-element array:
       "sourceAddress": "69.25.95.10",
       "groupAddress": "232.0.10.1",
       "port": 8000,
-      "tracks": ["video", "video/repair", "audio"],
+      "tracks": [
+        { "name": "video",        "id": 0 },
+        { "name": "video/repair", "id": 1 },
+        { "name": "audio",        "id": 2 },
+        { "name": "audio/repair", "id": 3 }
+      ],
       "bandwidth": 6500000
     }]
   }
@@ -179,13 +179,18 @@ audio/video groups) use multiple elements:
         "sourceAddress": "10.0.0.1",
         "groupAddress": "232.1.1.1",
         "port": 5004,
-        "tracks": ["video", "video/repair"]
+        "tracks": [
+          { "name": "video", "id": 0 },
+          { "name": "video/repair", "id": 1 }
+        ]
       },
       {
         "sourceAddress": "10.0.0.1",
         "groupAddress": "232.1.1.2",
         "port": 5004,
-        "tracks": ["audio"]
+        "tracks": [
+          { "name": "audio", "id": 2 }
+        ]
       }
     ],
     "networkSource": {
@@ -214,9 +219,17 @@ Endpoint field definitions:
 
 **port** (integer, REQUIRED): UDP port number.
 
-**tracks** (array, REQUIRED): Track names available on this endpoint.
-  Track names correspond to the track identifiers used in the MoQ
-  catalog renditions.
+**tracks** (array, REQUIRED): Tracks available on this endpoint.
+  Each element is an object with the following fields:
+
+  - **name** (string, REQUIRED): Track name corresponding to the
+    track identifier used in the MoQ catalog.
+  - **id** (integer, REQUIRED): Numeric Track ID used in the
+    condensed multicast packet header ([I-D.ramadan-moq-fec]
+    Section 6.4) for packet-level track routing.  Values MUST
+    be unique within an (sourceAddress, groupAddress, port) tuple.
+    For MMTP-packaged tracks, this field is informational — MMTP
+    uses its native packet_id for routing.
 
 **bandwidth** (integer, OPTIONAL): Aggregate bandwidth of this endpoint in bits per second. Subscribers SHOULD check available network capacity before joining high-bandwidth multicast groups.
 
@@ -224,7 +237,13 @@ Endpoint field definitions:
   configuration describing how subscribers can reach the multicast
   stream when native IP multicast routing is not available.  May
   appear on individual endpoints or at the top-level `multicast`
-  object to apply to all endpoints.  See Section 5.2.
+  object to apply to all endpoints.  See Section 4.2.
+
+Each (sourceAddress, groupAddress, port) tuple MUST be associated
+with at most one MoQ namespace.  Publishers requiring multiple
+independent streams MUST use distinct multicast groups or ports.
+This constraint ensures that Track ID values are unambiguous
+within a multicast group.
 
 Subscribers receiving a catalog with multicast endpoints SHOULD
 auto-connect to the multicast group when multicast APIs are
@@ -235,7 +254,7 @@ to multicast for lower-latency, FEC-protected delivery.
 
 During multicast join (which may take 1-3 seconds for IGMP/MLD), subscribers SHOULD continue receiving via MoQ/QUIC. Once multicast data arrives, subscribers switch to the multicast path. This dual-path startup avoids join latency gaps.
 
-### 5.2. Network Source Types
+### 4.2. Network Source Types
 
 The `networkSource` field describes how subscribers can reach the
 multicast stream when native IP multicast routing is not available.
@@ -246,7 +265,7 @@ on individual endpoints.
 
 Defined types:
 
-#### 5.2.1. AMT (Automatic Multicast Tunneling)
+#### 4.2.1. AMT (Automatic Multicast Tunneling)
 
 ```json
 {
@@ -273,9 +292,9 @@ Subscribers SHOULD attempt relay discovery in this order:
    "driad" or omitted
 3. Fall back to MoQ/QUIC unicast
 
-Note: DRIAD requires the SSM source IP to have a reverse DNS delegation with TYPE260 records. Publishers using cloud-hosted sources that lack reverse DNS control SHOULD provide the `relay` field as a direct fallback.
+Note: DRIAD requires TYPE260 reverse DNS records on the source IP. Publishers without reverse DNS control SHOULD provide the `relay` field directly.
 
-#### 5.2.2. ATSC 3.0 (Broadcast Television)
+#### 4.2.2. ATSC 3.0 (Broadcast Television)
 
 ```json
 {
@@ -296,15 +315,11 @@ Note: DRIAD requires the SSM source IP to have a reverse DNS delegation with TYP
 **serviceId** (integer, OPTIONAL): Service ID within the
   broadcast multiplex.
 
-This type indicates the multicast stream is available via an
-ATSC 3.0 broadcast signal [ATSC-A331].  Receivers with ATSC 3.0
-tuner hardware (USB dongles, built-in tuners, or NextGen TV
-sets) can receive the stream directly over RF without Internet
-connectivity.
+Receivers with ATSC 3.0 tuner hardware can receive the stream
+directly over RF.  MoQ subscribers without tuner hardware ignore
+this networkSource type.
 
-Note: These tuning parameters are intended for receivers with ATSC 3.0 tuner hardware. MoQ subscribers without tuner hardware ignore this networkSource type and use AMT or MoQ/QUIC instead.
-
-#### 5.2.3. Multiple Network Sources
+#### 4.2.3. Multiple Network Sources
 
 When a stream is available via multiple delivery technologies,
 `networkSource` MAY be an array:
@@ -319,40 +334,51 @@ When a stream is available via multiple delivery technologies,
 ```
 
 Subscribers select the highest-priority available source per the
-transport hierarchy defined in Section 4.
+transport hierarchy defined in Section 3.
 
-## 6. Multicast Packet Formats
+## 5. Multicast Packet Formats
 
-Each MoQ packaging type defines its own multicast UDP wire format. The catalog's `packaging` field tells receivers which parser to use: MMTP packets per [I-D.ramadan-moq-mmt], LOC objects per [I-D.ietf-moq-loc], or condensed packets per [I-D.ramadan-moq-fec] Section 7.4.
+Multicast UDP wire formats are determined by the source track's
+packaging type in the catalog:
 
-## 7. Security Considerations
+- **mmtp**: MMTP packets are transmitted as UDP datagrams with the
+  standard MMTP header intact per [I-D.ramadan-moq-mmt] Section 7.
+  MMTP is self-describing — each packet carries track routing
+  (packet_id), timestamps, sequence numbers, and FEC metadata
+  natively.
 
-### 7.1. Multicast Security
+- **loc**, **cmaf**: Source and repair symbols use the condensed
+  multicast packet format per [I-D.ramadan-moq-fec] Section 6.4.
+  Media frames or chunks are fragmented into symbol-sized (T-byte)
+  packets by the FEC encoder.  Each UDP datagram carries one
+  condensed header (8-12 bytes) plus one source or repair symbol.
+
+The catalog's packaging field and the multicast endpoint's track
+id field together tell receivers which parser and Track ID mapping
+to use for each incoming UDP datagram.
+
+## 6. Security Considerations
+
+### 6.1. Multicast Security
 
 SSM inherently limits traffic to authorized sources via (S,G)
-filtering.  For additional security:
+filtering.  Sequence numbers enable replay detection.  For AMT,
+trust is delegated to the relay per [RFC7450].
 
-- **DTLS-SRTP**: Encrypt media payloads when confidentiality is
-  required over multicast
-- **Source Authentication**: Validate source IP at AMT relay;
-  for SSM, receivers verify (S,G) membership
-- **FEC Integrity**: FEC decoder inconsistencies can detect injection
-  attacks; receivers SHOULD verify decoded media structure
-- **Replay Protection**: Sequence numbers enable detection of
-  replayed or reordered packets
-- **AMT Relay Trust**: For AMT, trust is delegated to the relay's
-  authentication mechanisms per [RFC7450]
-- **Content Authentication**: For content integrity across untrusted relay chains, publishers MAY include an Auth Tag MoQ extension header per [I-D.ramadan-moq-fec] on source track objects. The auth tag (e.g., ALTA) enables receivers to verify that media content has not been modified in transit, complementing SSM source address validation and QUIC hop-by-hop integrity. The authentication scheme and tag size are signaled in the catalog.
+Publishers MAY include Auth Tag extensions per [I-D.ramadan-moq-fec]
+for end-to-end content authentication across untrusted relay chains.
+FEC-specific security considerations are in [I-D.ramadan-moq-fec]
+Section 11.
 
-## 8. IANA Considerations
+## 7. IANA Considerations
 
 This document has no IANA actions.  The multicast catalog extension
-(Section 5) is a JSON schema extension to MoQ catalogs and does not
+(Section 4) is a JSON schema extension to MoQ catalogs and does not
 require IANA registration.
 
-## 9. References
+## 8. References
 
-### 9.1. Normative References
+### 8.1. Normative References
 
 [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
            Requirement Levels", BCP 14, RFC 2119,
@@ -380,7 +406,7 @@ require IANA registration.
            I. Swett, "Media over QUIC Transport",
            draft-ietf-moq-transport (work in progress).
 
-### 9.2. Informative References
+### 8.2. Informative References
 
 [I-D.ramadan-moq-mmt]
            Ramadan, O., "MPEG Media Transport (MMT) Packaging for
