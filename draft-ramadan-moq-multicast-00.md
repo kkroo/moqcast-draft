@@ -15,12 +15,11 @@ Abstract
    MoQ sessions integrate with IP multicast (SSM, ASM), Automatic
    Multicast Tunneling (AMT), and TreeDN for scalable live streaming.
    The specification includes a multicast catalog extension for endpoint
-   discovery, a condensed multicast packet format for LOC and CMAF
-   media over UDP, content authentication for multicast transport,
-   and delivery path selection across TV, mobile, and browser
-   platforms.  This document is container-format agnostic at the
-   catalog and discovery layer, and defines the condensed wire format
-   used by non-MMTP packaging types on multicast.
+   discovery and multi-path delivery across TV, mobile, and browser
+   platforms.  All multicast delivery uses MMTP packets — the same
+   packet format used on MoQ QUIC streams and datagrams — providing
+   track routing, timestamps, sequencing, FEC metadata, and
+   authentication natively.
 
 Status of This Memo
 
@@ -54,13 +53,9 @@ Table of Contents
              4.2.1.  AMT (Automatic Multicast Tunneling)
              4.2.2.  ATSC 3.0 (Broadcast Television)
              4.2.3.  Multiple Network Sources
-   5.  Multicast Packet Formats
-       5.1.  MMTP Multicast
-       5.2.  Condensed Multicast Packet Format
-       5.3.  Source Symbol Delivery
-       5.4.  Block Manifest
-       5.5.  Streaming Mode vs Recovery Mode
+   5.  Multicast Packet Format
    6.  Multi-Path Delivery
+       6.1.  Packaging Negotiation
    7.  Security Considerations
        7.1.  Multicast Security
        7.2.  Content Authentication
@@ -94,29 +89,25 @@ signaling of QUIC:
    TV, mobile, and browser clients
 2. **Catalog extension**: A container-agnostic multicast endpoint
    discovery mechanism for MoQ catalogs [I-D.ietf-moq-catalogformat]
-3. **Condensed wire format**: A compact multicast packet format for
-   LOC and CMAF media over UDP, with FEC metadata, object boundary
-   signaling, and optional authentication
+3. **MMTP wire format**: All multicast delivery uses MMTP packets —
+   the same packet format used on MoQ QUIC streams and datagrams.
+   MMTP provides track routing (packet_id), timestamps, sequencing
+   (PSN), FEC metadata (FEC Type, OTI), random access signaling
+   (RAP), and fragmentation (C flag) natively.
 4. **Multi-path delivery**: Combining MoQ unicast and multicast for
    seamless failover and FEC symbol deduplication
 
 MoQ relays MAY operate as TreeDN [RFC9706] nodes for hierarchical
 distribution.
 
-This specification works with any MoQ packaging format.  MMTP
-[I-D.ramadan-moq-mmt] uses its native self-describing framing on
-multicast.  LOC [I-D.ietf-moq-loc] and CMAF [I-D.ietf-moq-cmsf]
-use the condensed multicast packet format defined in Section 5.2.
-
 ### 1.1. Multicast as Supplement to MoQ Unicast
 
 Multicast delivery as defined in this document is a supplement to
-MoQ/QUIC unicast.  For LOC and CMAF packaging, subscribers MUST
-establish a MoQ session first to receive the catalog, negotiate
-parameters, and receive initial media.  Multicast MAY then be used
-as an optimized delivery path for ongoing media data.  This ensures
-that codec configuration (LOC Video Config property, CMAF init
-segment) is available before multicast reception begins.
+MoQ/QUIC unicast.  Subscribers MUST establish a MoQ session first
+to receive the catalog, negotiate parameters, and receive initial
+media.  Multicast MAY then be used as an optimized delivery path
+for ongoing media data.  This ensures that codec configuration is
+available before multicast reception begins.
 
 Exception: MMTP-packaged streams [I-D.ramadan-moq-mmt] delivered
 via ATSC 3.0 broadcast or native SSM are self-describing and MAY
@@ -142,13 +133,13 @@ in BCP 14 [RFC2119] [RFC8174].
 
 **TreeDN**: Tree-based Content Delivery Network [RFC9706]
 
-**IWA**: Isolated Web App -- a Chrome packaging format that grants
+**IWA**: Isolated Web App — a Chrome packaging format that grants
 DirectSocket API access
 
-**Block Manifest**: A header at the start of each source block's
-FEC-protected data containing object count and sizes, enabling
-receivers to split recovered byte streams into individual media
-objects after FEC recovery.
+**MMTP**: MMT Protocol — the packet layer of MPEG Media Transport
+([I-D.bouazizi-mmtp] Section 3).  Each MMTP packet is
+self-describing, carrying track routing, timestamps, sequencing,
+and FEC metadata natively.
 
 ## 3. Delivery Paths
 
@@ -174,6 +165,11 @@ DRIAD [RFC8777].
 Multiple transports MAY be available for a given stream.  Applications
 select transports based on availability and local policy.
 
+For broadcast deployments with Single Frequency Network (SFN)
+diversity, the receiver transport preference order is: SFN diversity
+reception, single transmitter, native SSM, AMT tunneling, MoQ/QUIC
+unicast.
+
 ## 4. Multicast Catalog Extension
 
 For tracks available via multicast, the MoQ catalog includes a
@@ -198,10 +194,10 @@ one-element array:
       "groupAddress": "232.0.10.1",
       "port": 8000,
       "tracks": [
-        { "name": "video",        "id": 0 },
-        { "name": "video/repair", "id": 1 },
-        { "name": "audio",        "id": 2 },
-        { "name": "audio/repair", "id": 3 }
+        { "name": "video",        "packetId": 1 },
+        { "name": "video/repair", "packetId": 2 },
+        { "name": "audio",        "packetId": 3 },
+        { "name": "audio/repair", "packetId": 4 }
       ],
       "bandwidth": 6500000
     }]
@@ -221,8 +217,8 @@ audio/video groups) use multiple elements:
         "groupAddress": "232.1.1.1",
         "port": 5004,
         "tracks": [
-          { "name": "video", "id": 0 },
-          { "name": "video/repair", "id": 1 }
+          { "name": "video",        "packetId": 1 },
+          { "name": "video/repair", "packetId": 2 }
         ]
       },
       {
@@ -230,7 +226,7 @@ audio/video groups) use multiple elements:
         "groupAddress": "232.1.1.2",
         "port": 5004,
         "tracks": [
-          { "name": "audio", "id": 2 }
+          { "name": "audio", "packetId": 3 }
         ]
       }
     ],
@@ -265,15 +261,16 @@ Endpoint field definitions:
 
   - **name** (string, REQUIRED): Track name corresponding to the
     track identifier used in the MoQ catalog.
-  - **id** (integer, REQUIRED): Numeric Track ID used in the
-    condensed multicast packet header (Section 5.2) for packet-level
-    track routing.  Values MUST be unique within an (sourceAddress,
-    groupAddress, port) tuple.  For MMTP-packaged tracks, this field
-    is informational -- MMTP uses its native packet_id for routing.
+  - **packetId** (integer, REQUIRED): MMTP packet_id used for
+    packet-level track routing on multicast.  Maps directly to the
+    Packet ID field in the MMTP header (Section 3.1 of
+    [I-D.ramadan-moq-mmt]).  Values MUST be unique within an
+    (sourceAddress, groupAddress, port) tuple.
 
-**bandwidth** (integer, OPTIONAL): Aggregate bandwidth of this
-  endpoint in bits per second.  Subscribers SHOULD check available
-  network capacity before joining high-bandwidth multicast groups.
+**bandwidth** (integer, RECOMMENDED): Aggregate bandwidth of this
+  endpoint in bits per second.  Publishers SHOULD include bandwidth
+  to enable capacity-aware join decisions.  Subscribers SHOULD check
+  available network capacity before joining high-bandwidth groups.
 
 **networkSource** (object or array, OPTIONAL): Network delivery
   configuration describing how subscribers can reach the multicast
@@ -281,15 +278,18 @@ Endpoint field definitions:
   appear on individual endpoints or at the top-level `multicast`
   object to apply to all endpoints.  See Section 4.2.
 
-Each (sourceAddress, groupAddress, port) tuple MUST be associated
-with at most one MoQ namespace.  Publishers requiring multiple
-independent streams MUST use distinct multicast groups or ports.
-This constraint ensures that Track ID values are unambiguous
-within a multicast group.
+Each (sourceAddress, groupAddress, port) multicast tuple MUST be
+associated with at most one MoQ namespace.  Publishers requiring
+multiple independent streams MUST use distinct multicast groups or
+ports.  This constraint ensures that MMTP packet_id values are
+unambiguous within a multicast group.
 
-Subscribers receiving a catalog with multicast endpoints SHOULD
+Subscribers receiving a catalog with multicast endpoints MAY
 auto-connect to the multicast group when multicast APIs are
-available (IWA DirectSocket, native UDP sockets, AMT tunneling).
+available and multicast delivery is preferred (IWA DirectSocket,
+native UDP sockets, AMT tunneling).  Multicast joins create
+IGMP/MLD state on intermediate routers; subscribers SHOULD only
+join when multicast provides a concrete benefit over unicast.
 This enables a seamless upgrade path: subscribers first connect via
 MoQ/QUIC to receive the catalog and media, then optionally switch
 to multicast for lower-latency, FEC-protected delivery.
@@ -301,8 +301,15 @@ dual-path startup avoids join latency gaps.
 
 If multicast reception fails or degrades, subscribers fall back
 to MoQ/QUIC unicast by subscribing with filter LatestGroup or
-NextGroup.  No multicast-to-MoQ coordinate mapping is needed --
+NextGroup.  No multicast-to-MoQ coordinate mapping is needed —
 the relay provides the current group position.
+
+Receivers SHOULD implement hysteresis to prevent flapping between
+multicast and unicast paths.  Switch away from multicast after
+sustained loss or consecutive FEC block failures; switch back only
+after multicast reception is stable for a sufficient period.
+Specific thresholds are implementation-defined and SHOULD be
+tunable.
 
 ### 4.2. Network Source Types
 
@@ -343,6 +350,8 @@ Subscribers SHOULD attempt relay discovery in this order:
 3. Fall back to MoQ/QUIC unicast
 
 Note: DRIAD requires TYPE260 reverse DNS records on the source IP.
+DRIAD relay addresses are typically anycast — subscribers connect
+to the topologically nearest relay without additional configuration.
 Publishers without reverse DNS control SHOULD provide the `relay`
 field directly.
 
@@ -354,7 +363,8 @@ field directly.
     "type": "atsc3",
     "frequency": 533000,
     "plpId": 0,
-    "serviceId": 1
+    "serviceId": 1,
+    "slsUri": "https://example.com/atsc3/sls/service1.xml"
   }
 }
 ```
@@ -366,6 +376,10 @@ field directly.
 
 **serviceId** (integer, OPTIONAL): Service ID within the
   broadcast multiplex.
+
+**slsUri** (string, OPTIONAL): URI for Service Layer Signaling (SLS)
+  bootstrap.  Enables receivers joining via IP (not RF) to acquire
+  the full ATSC 3.0 SLS including S-TSID with FEC parameters.
 
 Receivers with ATSC 3.0 tuner hardware can receive the stream
 directly over RF.  MoQ subscribers without tuner hardware ignore
@@ -388,229 +402,78 @@ When a stream is available via multiple delivery technologies,
 Subscribers select the highest-priority available source per the
 transport hierarchy defined in Section 3.
 
-## 5. Multicast Packet Formats
+## 5. Multicast Packet Format
 
-Multicast UDP wire formats are determined by the source track's
-packaging type in the catalog.
+All multicast delivery uses MMTP packets.  Each UDP datagram carries
+one MMTP packet — the same packet format used on MoQ QUIC streams
+and datagrams.  MMTP provides track routing (packet_id), timestamps,
+sequencing (Packet Sequence Number), FEC metadata (FEC Type, Source/
+Repair FEC Payload ID, per-packet OTI), random access signaling
+(RAP flag), and fragmentation (C flag) natively.
 
-### 5.1. MMTP Multicast
+LOC video objects [I-D.ietf-moq-loc] and CMAF chunks
+[I-D.ietf-moq-cmsf] are frame-sized (10-100KB+) and exceed the
+UDP datagram MTU (~1300 bytes).  Per [I-D.ietf-moq-loc] Section
+4.1: "When mapped to QUIC datagrams, each object must fit entirely
+within a QUIC datagram."  The same constraint applies to multicast
+UDP datagrams.  MMTP [I-D.bouazizi-mmtp] fragments media into
+MTU-sized packets natively per Section 4.1.1.  This is not a design
+choice — it is a physical constraint of datagram-based delivery.
 
-For MMTP-packaged tracks, MMTP packets are transmitted as UDP
-datagrams with the standard MMTP header intact per
-[I-D.ramadan-moq-mmt].  MMTP is self-describing -- each packet
-carries track routing (packet_id), timestamps, sequence numbers,
-and FEC metadata natively.  MMTP multicast operates as a
-unidirectional data stream (Section 1.1) and does not use the
-condensed format.
+No additional multicast framing, encapsulation, or header format is
+needed.  The MMTP packet format is defined in [I-D.ramadan-moq-mmt]
+Section 3.1 and [I-D.bouazizi-mmtp] Section 3.
 
-### 5.2. Condensed Multicast Packet Format
+This design means the same MMTP packet can be delivered via three
+transports without modification:
 
-For LOC and CMAF packaged tracks, source and repair data are
-delivered over IP multicast using the condensed multicast packet
-format defined in this section.  Each UDP datagram carries one
-condensed multicast packet containing either one source symbol
-(Flags bit 0 = 0) or one repair symbol (Flags bit 0 = 1).
+| Transport | Encapsulation |
+|-----------|---------------|
+| Reliable QUIC stream | MMTP packet as MoQ stream object |
+| QUIC datagram | MMTP packet as MoQ datagram object |
+| Multicast UDP | MMTP packet as UDP datagram |
 
-The condensed format provides track demuxing (Track ID), FEC
-metadata (SBN/ESI), random access signaling (RAP flag), object
-boundary signaling (Close flag), optional timestamps, optional
-codec configuration, and optional authentication -- all
-catalog-driven.
+Receivers on multicast demultiplex packets using the MMTP packet_id
+field, which maps to the `packetId` assigned in the multicast
+catalog endpoint (Section 4.1).  FEC source and repair packets are
+distinguished by the MMTP FEC Type field (1=source, 2=repair).
 
-```
-Condensed Multicast Packet {
-  Track ID (16),              // 2 bytes -- catalog-assigned per-track ID
-  Flags (8),                  // 1 byte -- see below
-  Source Block Number (16),   // 2 bytes -- SBN (wraps, modular arithmetic)
-  Encoding Symbol ID (16),    // 2 bytes -- ESI (up to 65535 symbols/block)
-  Auth Length (8),            // 1 byte -- 0=no auth, else tag size
-  [Timestamp (32)],           // 4 bytes -- NTP-short, if Flags bit 2 = 1
-  [Config Data (..)],         // Variable -- codec config, if Flags bit 3 = 1
-  Payload (..),               // Source symbol or repair symbol
-  [Auth Tag (Auth Length)],   // Variable-length (HMAC, ALTA, etc.)
-}
-```
-
-**Track ID** (16 bits): Identifies the media track for packet
-  routing (analogous to MMTP packet_id).  The value corresponds
-  to the `id` field assigned to each track in the multicast
-  catalog endpoint (Section 4.1).  Publishers MUST use consistent
-  Track ID values across all packets for a given track.
-
-**Flags** (8 bits): Bit field:
-  - Bit 0: Repair (0=source, 1=repair)
-  - Bit 1: RAP (0=delta frame, 1=keyframe/random access point)
-  - Bit 2: Timestamp (0=absent, 1=32-bit NTP-short follows header)
-  - Bit 3: Config (0=absent, 1=codec configuration data follows
-    Timestamp if present, else follows Auth Length).  SHOULD only
-    be set on RAP=1 source packets.  Config data is prefixed with
-    a 16-bit big-endian length.
-  - Bit 4: Close (0=not last, 1=last source symbol of current
-    object).  Enables streaming-mode receivers to process objects
-    in real-time without waiting for FEC block completion, similar
-    to the LCT B flag in ROUTE/ALC [ATSC-A331].  This flag is in
-    the condensed header (not FEC-protected); receivers requiring
-    reliable object boundaries after FEC recovery MUST use the
-    Block Manifest (Section 5.4) instead.
-  - Bits 5-7: Reserved (MUST be 0, receivers MUST ignore)
-
-**Timestamp** (32 bits, OPTIONAL): Present when Flags bit 2 is set.
-  NTP short format (16-bit seconds + 16-bit fractional seconds).
-  RECOMMENDED for LOC source packets where in-band timestamps are
-  not available.  Not needed for CMAF (timestamps in moof box) or
-  repair symbols.
-
-**Config Data** (variable, OPTIONAL): Present when Flags bit 3 is
-  set.  Prefixed by a 16-bit big-endian length in bytes, followed
-  by codec configuration data (e.g., SPS/PPS for H.264, VPS/SPS/PPS
-  for HEVC, or other codec-specific extradata as declared in the
-  catalog's `selectionParams.codec`).  Publishers SHOULD include
-  Config on every RAP=1 source packet to enable mid-stream join on
-  multicast without requiring MoQ unicast bootstrap for codec
-  configuration.
-
-**SBN** (16 bits): Source Block Number.  When FEC is in use (per
-  [I-D.ramadan-moq-fec]), identifies the FEC source block.  Wraps
-  using modular arithmetic.  Receivers distinguish wrap-around from
-  late/duplicate packets using the half-space rule: if
-  `new_SBN - current_SBN > 32768` (unsigned), treat as wrap.
-  When FEC is not in use, SBN serves as a sequence counter for
-  packet ordering and loss detection.  Publishers SHOULD reset SBN
-  on stream restart.
-
-**ESI** (16 bits): Encoding Symbol ID.  When FEC is in use, source
-  symbols have ESI < K and repair symbols have ESI >= K.  Supports
-  up to 65535 symbols per block.  When FEC is not in use, ESI
-  serves as a packet sequence number within the current SBN.
-
-**Auth Length** (8 bits): Auth tag length in bytes.  0 = no auth.
-  Max 255, sufficient for HMAC-SHA256 (32), Ed25519 (64), and
-  ALTA variable-length tags.  Auth scheme is declared in the
-  catalog (Section 7.2).
-
-**Payload**: Source symbol data or repair symbol (Symbol Size bytes
-  when FEC is in use, or variable when FEC is not in use).  For
-  source symbols, the first source symbol of each FEC block starts
-  with a Block Manifest (Section 5.4) when FEC is in use.
-
-**Auth Tag** (Auth Length bytes): Scheme-specific tag (HMAC, ALTA,
-  etc.) as declared in catalog.
-
-Fixed overhead: 8 bytes without optional fields (vs MMTP 33 bytes).
-
-Each (sourceAddress, groupAddress, port) multicast tuple MUST
-be associated with at most one MoQ namespace.  Publishers
-requiring multiple streams MUST use distinct multicast groups
-or ports.
-
-### 5.3. Source Symbol Delivery
-
-On multicast, media frames or chunks that exceed T bytes (the FEC
-symbol size from the catalog) are fragmented into T-byte source
-symbols by the FEC encoder before transmission.  Each source symbol
-is carried in one UDP datagram with a condensed header (Flags
-bit 0 = 0).
-
-Source payloads MAY be smaller than T bytes (e.g., the last
-symbol of a frame, or small audio frames).  Receivers determine
-the actual payload size from the UDP datagram length:
-
-    payload_size = datagram_length - header_size - Auth_Length
-
-where header_size depends on the Flags bits present.  When FEC is
-in use, receivers pad source payloads to T bytes with zeros for
-FEC decoding.
-
-Publishers MUST set the Close flag (Flags bit 4) on the last
-source symbol of each media object (frame or chunk).  This enables
-streaming-mode receivers (Section 5.5) to begin processing objects
-before the full FEC block is available.
-
-When FEC is not in use, each condensed packet carries one complete
-media frame or chunk (or a fragment thereof with Close signaling
-the final fragment).
-
-### 5.4. Block Manifest
-
-When FEC is in use and multiple media objects (frames, chunks) are
-packed into a single FEC source block, the publisher MUST prepend a
-Block Manifest to the source block's byte stream before symbol
-fragmentation.  The Block Manifest is part of the FEC-protected
-source data, ensuring reliable object boundary recovery even when
-condensed headers (including the Close flag) are lost for
-FEC-recovered symbols.
-
-```
-Block Manifest {
-  Object Count (QUIC varint),                   // 1-8 bytes
-  Object Lengths [Object Count] (QUIC varint),  // 1-8 bytes each
-}
-```
-
-**Object Count**: Number of media objects in this source block,
-  encoded as a QUIC variable-length integer (RFC 9000 Section 16).
-
-**Object Lengths**: Array of `Object Count` entries, each a QUIC
-  variable-length integer giving the byte size of one media object.
-  Objects are listed in transmission order.
-
-After FEC recovery, the receiver reads the Block Manifest from the
-first bytes of the recovered source block, then uses the Object
-Lengths to split the remaining bytes into individual media objects.
-
-Overhead examples:
-
-| Block content | Manifest size |
-|--------------|--------------|
-| 60 video frames, avg 5KB | 1 + 60x2 = 121 bytes |
-| 4 CMAF chunks, avg 100KB | 1 + 4x4 = 17 bytes |
-| 30 audio frames, avg 200B | 1 + 30x1 = 31 bytes |
-
-When a source block contains exactly one object (e.g., interleave
-depth 1 with one frame per group), the Block Manifest is still
-present (Object Count = 1, one Object Length entry) for format
-consistency.
-
-### 5.5. Streaming Mode vs Recovery Mode
-
-The condensed multicast format supports two receiver modes:
-
-**Streaming mode**: Under low loss, receivers process source symbols
-  as they arrive, using the Close flag (Flags bit 4) to detect
-  object boundaries in real-time.  Each completed object is passed
-  to the decoder immediately.  FEC recovery is not invoked.  This
-  is analogous to ROUTE/ALC [ATSC-A331] streaming delivery.
-
-**Recovery mode**: Under loss, receivers collect source and repair
-  symbols for a full FEC block, perform FEC recovery (per
-  [I-D.ramadan-moq-fec] when available), then use the Block Manifest
-  (Section 5.4) to split the recovered byte stream into individual
-  objects.  The Block Manifest is FEC-protected and always available
-  after successful recovery.
-
-Receivers MAY operate in streaming mode by default and fall back to
-recovery mode when loss is detected within a source block.
+For ATSC 3.0 and ARIB STD-B60 broadcast receivers, MMTP over SSM
+is the native delivery path.  No format conversion is needed — MoQ
+relays at network edges bridge the same MMTP packets between
+multicast and QUIC transports.
 
 ## 6. Multi-Path Delivery
 
 The same media content (source and repair) can be transmitted over
 both MoQ unicast (QUIC/WebTransport) and multicast (UDP/SSM/AMT)
-paths simultaneously.  Receivers on reliable unicast paths MAY
-skip FEC decoding; receivers on lossy multicast paths use FEC for
-recovery when available per [I-D.ramadan-moq-fec].
+paths simultaneously.  Because the same MMTP packets are used on all
+transports, receivers can combine symbols from any path for FEC
+recovery.
 
 When symbols arrive from multiple paths simultaneously, receivers:
 
 1. MUST deduplicate symbols using SBN+ESI as the unique key
+   within a single (namespace, track_name) tuple
 2. MAY combine source symbols from reliable MoQ/QUIC with repair
-   symbols from lossy multicast -- skipping FEC when all source
+   symbols from lossy multicast — skipping FEC when all source
    symbols arrive reliably
 
 Multicast-to-unicast failover: if multicast reception fails,
 subscribers fall back to MoQ/QUIC unicast by subscribing with
 filter LatestGroup or NextGroup per [I-D.ietf-moq-transport].
 No coordinate mapping between multicast SBN and MoQ group_id is
-needed -- the relay provides the current position.
+needed — the relay provides the current position.
+
+### 6.1. Packaging Negotiation
+
+Packaging negotiation is implicit in MoQ: subscribers subscribe to
+tracks by name, and the catalog advertises packaging per track.  A
+subscriber that only supports LOC subscribes to the LOC track; a
+subscriber that supports MMTP subscribes to the MMTP track.  The
+`altGroup` catalog field enables publishers to offer the same
+content in multiple packaging formats.
+No explicit packaging capability negotiation is needed.
 
 ## 7. Security Considerations
 
@@ -622,20 +485,38 @@ trust is delegated to the relay per [RFC7450].
 
 ### 7.2. Content Authentication
 
-Multicast UDP lacks QUIC's integrity guarantees.  Publishers MAY
-include per-packet authentication tags in the condensed multicast
-format (Auth Length + Auth Tag fields, Section 5.2) for end-to-end
-content authentication across untrusted relay chains.
+Multicast UDP lacks QUIC's integrity guarantees.  For MMTP-packaged
+multicast delivery, content authentication uses the MMTP
+signed_mmt_message mechanism per [I-D.bouazizi-mmtp] Section 3.1
+(header extension format).  This provides per-packet authentication
+using digital signatures carried in MMTP header extensions.
 
-The authentication scheme is declared in the catalog as part of the
-multicast configuration:
+Key distribution for multicast authentication uses one of two
+signaling paths:
+
+1. **MMTP PA (Package Access) messages**: Certificates are carried
+   in PA messages published on the MoQ signaling track.  PA
+   messages are MMTP signaling packets (Packet Type = signaling)
+   that carry security-related tables.
+
+2. **MoQ catalog `auth` extension**: Certificates or certificate
+   URLs are included in the catalog's `auth` field, enabling
+   pre-join key discovery.
+
+The specific key distribution mechanism is out of scope for this
+document, but the signaling paths above provide the transport.
+Publishers SHOULD rotate signing keys periodically and deliver new
+certificates via PA messages.  Receivers that miss a PA message can
+request the current certificate via the MoQ signaling track.
+
+The authentication configuration is declared in the catalog as part
+of the multicast configuration:
 
 ```json
 {
   "multicast": {
     "auth": {
-      "scheme": "hmac-sha256",
-      "keyId": "stream-2026-04"
+      "scheme": "signed_mmt_message"
     },
     "endpoints": [...]
   }
@@ -643,26 +524,26 @@ multicast configuration:
 ```
 
 **scheme** (string, REQUIRED if auth present): Authentication
-  algorithm identifier.  Defined values:
-  - "hmac-sha256": HMAC-SHA-256, 32-byte tag
-  - "ed25519": Ed25519 signature, 64-byte tag
-  - "alta": ALTA per [I-D.krose-mboned-alta], variable-length tag
-
-**keyId** (string, OPTIONAL): Key identifier for key distribution.
-  Key distribution mechanism is out of scope of this document.
-
-For MMTP-packaged tracks, MMTP-native authentication mechanisms
-apply per [ISO.23008-1].
+  mechanism identifier.  Defined values:
+  - "signed_mmt_message": MMTP-native per-packet authentication
+    per [I-D.bouazizi-mmtp] Section 3.1
+  - "alta": ALTA per [I-D.krose-mboned-alta] — lightweight
+    asymmetric loss-tolerant authentication, carried in MMTP
+    header extensions
 
 On MoQ unicast, end-to-end content authentication MAY be provided
 by Secure Objects which provides object-level encryption and
 authentication independent of multicast.
 
+Content authentication for multicast is an active area of work.
+Deployments SHOULD track developments in [I-D.krose-mboned-alta]
+and related specifications.
+
 ## 8. IANA Considerations
 
 This document has no IANA actions.  The multicast catalog extension
-(Section 4) and condensed multicast packet format (Section 5.2) are
-defined by this document and do not require IANA registration.
+(Section 4) is defined by this document and does not require IANA
+registration.
 
 ## 9. References
 
@@ -685,10 +566,6 @@ defined by this document and do not require IANA registration.
 [RFC8777]  Holland, J., "DNS Reverse IP Automatic Multicast Tunneling
            (AMT) Discovery", RFC 8777, DOI 10.17487/RFC8777, April 2020.
 
-[RFC9000]  Iyengar, J., Ed. and M. Thomson, Ed., "QUIC: A UDP-Based
-           Multiplexed and Secure Transport", RFC 9000,
-           DOI 10.17487/RFC9000, May 2021.
-
 [RFC9706]  Holland, J., et al., "TreeDN: Tree-Based Content Delivery
            Network (CDN) for Live Streaming to Mass Audiences",
            RFC 9706, December 2024.
@@ -697,6 +574,10 @@ defined by this document and do not require IANA registration.
            Curley, L., Pugin, K., Nandakumar, S., Vasiliev, V., and
            I. Swett, "Media over QUIC Transport",
            draft-ietf-moq-transport (work in progress).
+
+[I-D.bouazizi-mmtp]
+           Bouazizi, I., "MMT Protocol (MMTP)",
+           draft-bouazizi-mmtp-01 (work in progress).
 
 ### 9.2. Informative References
 
@@ -708,15 +589,6 @@ defined by this document and do not require IANA registration.
            Ramadan, O., "Forward Error Correction for Media over QUIC",
            draft-ramadan-moq-fec (work in progress).
 
-[I-D.ietf-moq-cmsf]
-           Law, W., "CMSF: A CMAF Compliant Implementation of
-           MOQT Streaming Format", draft-ietf-moq-cmsf
-           (work in progress).
-
-[I-D.ietf-moq-loc]
-           Zanaty, M., et al., "Low Overhead Media Container",
-           draft-ietf-moq-loc (work in progress).
-
 [I-D.ietf-moq-catalogformat]
            Nandakumar, S., et al., "Common Catalog Format for
            MoQ", draft-ietf-moq-catalogformat (work in progress).
@@ -725,10 +597,21 @@ defined by this document and do not require IANA registration.
            Krose, B., "Asymmetric Loss-Tolerant Authentication",
            draft-krose-mboned-alta (work in progress).
 
+[I-D.ietf-moq-loc]
+           Zanaty, M., et al., "Low Overhead Media Container",
+           draft-ietf-moq-loc (work in progress).
+
+[I-D.ietf-moq-cmsf]
+           Law, W., "CMSF: A CMAF Compliant Implementation of
+           MOQT Streaming Format", draft-ietf-moq-cmsf
+           (work in progress).
+
 [ISO.23008-1]
            ISO, "Information technology - High efficiency coding and
            media delivery in heterogeneous environments - Part 1:
            MPEG media transport (MMT)", ISO/IEC 23008-1:2023.
+           (Informative.  A freely available description of the MMTP
+           wire format is provided by [I-D.bouazizi-mmtp].)
 
 [ATSC-A331]
            ATSC, "Signaling, Delivery, Synchronization, and Error
