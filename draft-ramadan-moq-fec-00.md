@@ -63,11 +63,14 @@ Table of Contents
    8.  Block and Group Alignment
        8.1.  Single-Group Blocks
        8.2.  Multi-Group Blocks
+       8.3.  Source Symbol ESI Derivation
+       8.4.  Encoder Constraints
    9.  Interleaving
    10. Priority and Congestion
    11. Hybrid Unicast and Multicast Delivery
        11.1. Multicast and AMT Delivery
        11.2. Relay-Generated Repair
+       11.3. Relay FEC Recovery
    12. ATSC 3.0 Compatibility
        12.1. Mapping to A/331 AL-FEC
        12.2. S-TSID to FEC_CONFIG Conversion
@@ -1144,7 +1147,7 @@ Complete catalog with FEC and multicast configuration:
 
 The `multicast` field uses the simple format defined in
 [I-D.ramadan-moq-multicast] Section 7.1.  For multi-endpoint
-deployments, the extended format (Section 7.2) with `endpoints`
+deployments, the extended format ([I-D.ramadan-moq-multicast] Section 7.2) with `endpoints`
 array is also available.
 
 ## Authors' Addresses

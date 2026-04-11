@@ -42,7 +42,7 @@ Table of Contents
        6.1.  Interleaving
        6.2.  OTI Signaling
    7.  FEC_CONFIG Message
-       7.1.  Message Format
+       7.1.  MMT-Specific FEC_CONFIG Usage
        7.2.  Repair Track Discovery
        7.3.  Multicast Delivery of FEC_CONFIG
    8.  Multicast Integration
@@ -56,7 +56,7 @@ Table of Contents
        11.1. Container Values
        11.2. S-TSID to MoQ Catalog Conversion
        11.3. MoQ Catalog to S-TSID Conversion
-       11.4. Multicast Catalog Extension Reference
+       11.4. Multicast Endpoint Catalog Extension
    12. Security Considerations
        12.1. Multicast Security
    13. IANA Considerations
@@ -335,7 +335,7 @@ its use.
 
 When used with MMT packaging, the FEC_CONFIG fields map as follows:
 
-- **FEC Algorithm**: Typically 0x02 (RaptorQ) for ATSC 3.0 ingest,
+- **FEC Algorithm**: Typically 0x01 (RaptorQ) for ATSC 3.0 ingest,
   or as specified in MMTP AL-FEC signaling
 - **Source Symbols Per Block**: Corresponds to the number of MFUs
   (or MMTP packets) covered by one FEC block
