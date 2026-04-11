@@ -82,7 +82,7 @@ MMT provides native support for:
 - Media Processing Units (MPU, branded "mpuf" in ISOBMFF) as the
   media container, with structural similarities to fMP4
 - Application-Layer FEC (AL-FEC) supporting multiple schemes
-  including RaptorQ, LDPC, and Reed-Solomon
+  including RaptorQ and Reed-Solomon
 - Cross-layer signaling for adaptive streaming
 - Hybrid delivery combining broadcast and broadband
 

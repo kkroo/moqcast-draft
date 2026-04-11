@@ -15,8 +15,8 @@ Abstract
    QUIC (MoQ) sessions.  It defines signaling for FEC configuration
    via both control messages and catalog extensions, conventions for
    repair track naming, and the format of repair objects.  The mechanism
-   supports RaptorQ (RFC 6330), Reed-Solomon (RFC 5510), and XOR-based
-   FEC schemes, enabling receivers to recover from packet loss without
+   supports RaptorQ (RFC 6330) and Reed-Solomon (RFC 5510),
+   enabling receivers to recover from packet loss without
    retransmission latency.  This specification is designed for
    compatibility with ATSC 3.0 (A/331) and ARIB STD-B60 broadcast systems.
 
@@ -279,21 +279,16 @@ subscription.
 
 | Value | Algorithm | Reference |
 |-------|-----------|-----------|
-| 0x00  | None      | N/A       |
-| 0x01  | XOR       | This document |
-| 0x02  | RaptorQ   | [RFC6330] |
-| 0x03  | Reed-Solomon (GF2^8) | [RFC5510] |
-| 0x04-0xFF | Reserved | IANA |
+| 0x00  | None      | This document |
+| 0x01  | RaptorQ   | [RFC6330] |
+| 0x02  | Reed-Solomon (GF2^8) | [RFC5510] |
+| 0x03-0xFF | Reserved | IANA |
 
-**XOR (0x01)**: Simple XOR-based FEC.  Each repair symbol is the XOR
-of all source symbols in the block.  Can recover exactly one lost
-symbol per block.
-
-**RaptorQ (0x02)**: RaptorQ fountain code per [RFC6330].  Can recover
+**RaptorQ (0x01)**: RaptorQ fountain code per [RFC6330].  Can recover
 from loss of any symbols as long as K symbols (source or repair) are
 received.  Recommended for most applications.
 
-**Reed-Solomon (0x03)**: Reed-Solomon erasure code over GF(2^8) per
+**Reed-Solomon (0x02)**: Reed-Solomon erasure code over GF(2^8) per
 [RFC5510].  Can recover up to P lost symbols.  Suitable for
 applications requiring exact recovery guarantees or interoperability
 with ATSC 3.0 systems using RS FEC.
@@ -492,12 +487,6 @@ number of source symbols).
 
 For Reed-Solomon, repair symbols are generated per [RFC5510] using
 the Vandermonde matrix construction.
-
-For XOR, a single repair symbol is generated as:
-
-```
-repair_symbol = source_symbol[0] XOR source_symbol[1] XOR ... XOR source_symbol[K-1]
-```
 
 ## 8. Block and Group Alignment
 
@@ -936,10 +925,9 @@ with the following initial values:
 | Value | Algorithm | Reference |
 |-------|-----------|-----------|
 | 0x00  | None      | This document |
-| 0x01  | XOR       | This document |
-| 0x02  | RaptorQ   | [RFC6330] |
-| 0x03  | Reed-Solomon | [RFC5510] |
-| 0x04-0xFF | Unassigned | |
+| 0x01  | RaptorQ   | [RFC6330] |
+| 0x02  | Reed-Solomon | [RFC5510] |
+| 0x03-0xFF | Unassigned | |
 
 New registrations require Specification Required policy.
 
@@ -1105,7 +1093,7 @@ Complete catalog with FEC and multicast configuration:
       "channelCount": 2,
       "bitrate": 128000,
       "fec": {
-        "algorithm": "xor",
+        "algorithm": "none",
         "sourceSymbols": 10,
         "repairSymbols": 1,
         "symbolSize": 512,

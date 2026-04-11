@@ -22,7 +22,7 @@ Abstract
    CMAF chunks are frame-sized and exceed the QUIC datagram MTU.  The
    same MMTP packets work on reliable QUIC streams, QUIC datagrams,
    and multicast UDP.  The mechanism supports RaptorQ (RFC 6330),
-   Reed-Solomon (RFC 5510), LDPC, and XOR-based FEC schemes,
+   Reed-Solomon (RFC 5510), and a "none" passthrough mode,
    enabling receivers to recover from packet loss without
    retransmission latency.
 
@@ -169,29 +169,19 @@ packets.
 
 | Value | Algorithm | Reference |
 |-------|-----------|-----------|
-| 0x00  | None      | N/A       |
-| 0x01  | XOR       | This document |
-| 0x02  | RaptorQ   | [RFC6330] |
-| 0x03  | Reed-Solomon (GF2^8) | [RFC5510] |
-| 0x04  | LDPC      | [ATSC-A331] |
-| 0x05-0xFF | Reserved | IANA |
+| 0x00  | None      | This document |
+| 0x01  | RaptorQ   | [RFC6330] |
+| 0x02  | Reed-Solomon (GF2^8) | [RFC5510] |
+| 0x03-0xFF | Reserved | IANA |
 
-**XOR (0x01)**: Simple XOR-based FEC.  Each repair symbol is the XOR
-of all source symbols in the block.  Can recover exactly one lost
-symbol per block.
-
-**RaptorQ (0x02)**: RaptorQ fountain code per [RFC6330].  Can recover
+**RaptorQ (0x01)**: RaptorQ fountain code per [RFC6330].  Can recover
 from loss of any symbols as long as K symbols (source or repair) are
 received.  Recommended for most applications.
 
-**Reed-Solomon (0x03)**: Reed-Solomon erasure code over GF(2^8) per
+**Reed-Solomon (0x02)**: Reed-Solomon erasure code over GF(2^8) per
 [RFC5510].  Can recover up to P lost symbols.  Suitable for
 applications requiring exact recovery guarantees or interoperability
 with ATSC 3.0 systems using RS FEC.
-
-**LDPC (0x04)**: Low-Density Parity-Check code as used in ATSC 3.0
-ROUTE/DASH [ATSC-A331].  Suitable for broadcast interoperability
-where LDPC is the ingested FEC scheme.
 
 ### 3.2. RaptorQ Object Transmission Information
 
@@ -333,10 +323,8 @@ Field definitions for the `fec` object:
 
 **algorithm** (string, REQUIRED if fec present): FEC scheme identifier.
   - "none": No FEC
-  - "xor": Simple XOR
   - "raptorq": RaptorQ per RFC 6330
   - "reed-solomon": Reed-Solomon per RFC 5510
-  - "ldpc": LDPC per ATSC A/331
 
 **sourceSymbols** (integer, REQUIRED): K value - source symbols per
 FEC block.
@@ -538,12 +526,6 @@ number of source symbols).
 For Reed-Solomon, repair symbols are generated per [RFC5510] using
 the Vandermonde matrix construction.
 
-For XOR, a single repair symbol is generated as:
-
-```
-repair_symbol = source_symbol[0] XOR source_symbol[1] XOR ... XOR source_symbol[K-1]
-```
-
 ## 7. FEC Block Structure
 
 Each FEC source block is scoped to at most D consecutive MoQ groups,
@@ -674,11 +656,9 @@ with the following initial values:
 | Value | Algorithm | Reference |
 |-------|-----------|-----------|
 | 0x00  | None      | This document |
-| 0x01  | XOR       | This document |
-| 0x02  | RaptorQ   | [RFC6330] |
-| 0x03  | Reed-Solomon | [RFC5510] |
-| 0x04  | LDPC       | [ATSC-A331] |
-| 0x05-0xFF | Unassigned | |
+| 0x01  | RaptorQ   | [RFC6330] |
+| 0x02  | Reed-Solomon | [RFC5510] |
+| 0x03-0xFF | Unassigned | |
 
 New registrations require Specification Required policy.
 
