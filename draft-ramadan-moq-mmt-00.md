@@ -3,7 +3,7 @@
 ```
 Internet-Draft                                              O. Ramadan
 Intended status: Standards Track                             Blockcast
-Expires: October 2026                                      April 2026
+Expires: January 2027                                       July 2026
 
         MPEG Media Transport (MMT) Packaging for Media over QUIC
                       draft-ramadan-moq-mmt-00
@@ -14,16 +14,10 @@ Abstract
    container format for Media over QUIC (MoQ).  MMT provides a unified
    framework for streaming media over heterogeneous networks including
    broadcast (ATSC 3.0, ARIB STD-B60), multicast (SSM), and unicast
-   (QUIC/WebTransport).  MMTP packets are MTU-sized (~1300 bytes) and
-   work identically on reliable QUIC streams, QUIC datagrams, and
-   multicast UDP — same packet, three transports.  This specification
-   defines the mapping of MMT packets to MoQ objects as a passthrough
-   format preserving the original MMTP wire format, field mappings
-   between MoQ/LOC and MMTP, interaction with Application-Layer FEC
-   including multi-path FEC delivery where MMTP repair packets are
-   passed through identically across ATSC 3.0 broadcast, SSM,
-   and MoQ CDN paths, relay transcoding between MMTP and LOC formats,
-   and compatibility considerations for both ATSC 3.0 and ARIB STD-B60
+   (QUIC/WebTransport).  This specification defines the mapping of MMT
+   packets to MoQ objects, interaction with Application-Layer FEC,
+   bidirectional conversion between S-TSID and MoQ catalogs, and
+   compatibility considerations for both ATSC 3.0 and ARIB STD-B60
    systems.
 
 Status of This Memo
@@ -42,39 +36,41 @@ Table of Contents
        4.1.  Track Structure
        4.2.  Object Payload
        4.3.  Group Boundaries
-       4.4.  Ordering Model
-       4.5.  Signaling Messages
-   5.  Relay Transcoding
-       5.1.  MMTP to LOC Unwrapping
-       5.2.  CMAF and MPU ISOBMFF Compatibility
+   5.  Media Fragment Unit (MFU) Mode
+       5.1.  MFU Fragmentation
    6.  FEC Integration
-       6.1.  MMTP as Universal FEC Container
-       6.2.  Per-Group Encoding
-       6.3.  Source Symbol Model
-   7.  Field Mappings
-       7.1.  MoQ Transport ↔ MMTP
-       7.2.  MMTP → LOC Unwrapping
-       7.3.  FEC Field Mapping
+       6.1.  Interleaving
+       6.2.  OTI Signaling
+   7.  FEC_CONFIG Message
+       7.1.  Message Format
+       7.2.  Repair Track Discovery
+       7.3.  Multicast Delivery of FEC_CONFIG
    8.  Multicast Integration
    9.  ARIB STD-B60 Compatibility
-   10. Catalog Signaling
-       10.1. Packaging Registration
-       10.2. Backwards Compatibility
-   11. Security Considerations
-       11.1. Multicast Security
-   12. IANA Considerations
-   13. References
-       13.1. Normative References
-       13.2. Informative References
-   Appendix A.  Implementation Guidance: Frame Ordering
+       9.1.  Clock Reference
+       9.2.  8K UHDTV Support
+       9.3.  Hybridcast Integration
+       9.4.  Typical FEC Parameters
+   10. Transport Hierarchy
+   11. Catalog Signaling
+       11.1. Container Values
+       11.2. S-TSID to MoQ Catalog Conversion
+       11.3. MoQ Catalog to S-TSID Conversion
+       11.4. Multicast Catalog Extension Reference
+   12. Security Considerations
+       12.1. Multicast Security
+   13. IANA Considerations
+   14. References
+   Appendix A. Bandwidth Comparison
+   Appendix B. S-TSID Conversion Example
    Authors' Addresses
 ```
 
 ## 1. Introduction
 
-MPEG Media Transport (MMT) [I-D.bouazizi-mmtp] is a transport
-protocol designed for delivery of multimedia content over
-heterogeneous networks.  MMT is supported as an alternative transport in ATSC 3.0
+MPEG Media Transport (MMT) [ISO.23008-1] is a transport protocol
+designed for delivery of multimedia content over heterogeneous
+networks.  MMT is supported as an alternative transport in ATSC 3.0
 broadcast television (Americas, South Korea) alongside the primary
 ROUTE/DASH transport, and is the basis for ARIB STD-B60 (Japan).
 MMT provides native support for:
@@ -86,58 +82,43 @@ MMT provides native support for:
 - Cross-layer signaling for adaptive streaming
 - Hybrid delivery combining broadcast and broadband
 
-MMTP packets are MTU-sized (~1300 bytes), fitting in UDP datagrams,
-QUIC datagrams, and QUIC stream objects.  This means MMTP works
-identically on all three transports — same packet, same FEC metadata,
-same receiver logic.  MMTP is the FEC and datagram/multicast
-container for MoQ: LOC video objects and CMAF chunks are frame-sized
-(10-100KB+) and exceed the QUIC datagram MTU — MMTP fragmentation
-is the necessary packetization layer for datagram and multicast
-delivery.  MMTP handles video frame fragmentation, FEC metadata,
-track routing, timestamps, and sequencing natively.
-
 This document defines how MMT-encapsulated media can be transported
 over MoQ [I-D.ietf-moq-transport], enabling:
 
 1. **Broadcast-to-Unicast bridging**: Content from ATSC 3.0 or ARIB STD-B60
    broadcasts can be relayed to MoQ subscribers without transcoding
-2. **Unified FEC**: MMTP is the FEC container for all transports —
-   the same repair packets work on QUIC streams, QUIC datagrams,
-   and multicast UDP
-3. **Datagram delivery**: MMTP packet size (~T bytes) fits in QUIC
-   datagrams, enabling unreliable FEC-protected delivery via the
-   Datagram forwarding preference
-4. **Multicast delivery**: MMTP over SSM is self-describing
-   and operates as a unidirectional stream without MoQ signaling
-5. **Single encoder pipeline**: Broadcasters can use one MMTP output
-   for ATSC 3.0 RF, MoQ CDN, and multicast delivery simultaneously
+2. **Unified FEC**: MMT's AL-FEC integrates with MoQ FEC repair tracks
+   per [I-D.ramadan-moq-fec]
+3. **Multicast promotion**: MoQ clients can receive SSM multicast
+   directly when available, per [I-D.ramadan-moq-multicast]
+4. **Bidirectional signaling**: Convert between S-TSID (ATSC) and MoQ
+   catalogs for seamless interoperability
 
 ### 1.1. Relationship to Other MoQ Media Formats
 
 This specification complements existing MoQ packaging formats:
 
-| Format | Container | Transport | FEC Support |
-|--------|-----------|-----------|-------------|
-| MSF (LOC) | WebCodecs chunks | Reliable QUIC stream only | N/A — QUIC retransmits |
-| CMSF | CMAF fMP4 | Reliable QUIC stream only | N/A — QUIC retransmits |
-| This spec (MMT) | MMTP + MPU (ISOBMFF) | All (streams, datagrams, multicast) | Native AL-FEC |
+| Format | Container | Primary Use Case | FEC Support |
+|--------|-----------|------------------|-------------|
+| MSF (LOC) | WebCodecs chunks | Low-latency unicast | No |
+| CMSF | CMAF fMP4 | Adaptive streaming | No |
+| CARP | CMAF fMP4 | ABR delivery | No |
+| This spec (MMT) | MMTP + MPU (ISOBMFF) | Broadcast bridge | Yes |
 
-**LOC** and **CMAF** objects are frame-sized and require reliable
-QUIC stream delivery (retransmission for loss recovery).  **MMTP**
-fragments media into MTU-sized packets, enabling FEC-protected
-delivery on QUIC datagrams and multicast UDP where retransmission
-is not available.  This is a protocol constraint (MTU), not a
-quality judgment.
+MMT packaging is RECOMMENDED when:
+- Ingesting ATSC 3.0 or ARIB STD-B60 broadcasts
+- FEC protection is required for multicast delivery
+- Hybrid broadcast/unicast architectures are deployed
+- Interoperability with broadcast receivers is needed
+
+CMAF packaging (CMSF/CARP) is RECOMMENDED when:
+- Content originates as DASH/HLS
+- No multicast delivery is planned
+- Interoperability with existing CDN infrastructure is needed
 
 ## 2. Terminology
 
-The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
-"SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
-"OPTIONAL" in this document are to be interpreted as described in
-BCP 14 [RFC2119] [RFC8174] when, and only when, they appear in all
-capitals, as shown here.
-
-**MMTP**: MMT Protocol - the packet layer of MMT ([I-D.bouazizi-mmtp] Section 3)
+**MMTP**: MMT Protocol - the packet layer of MMT (ISO 23008-1 Clause 8)
 
 **MPU**: Media Processing Unit - a self-contained media segment in MMT,
 typically aligned with a Group of Pictures (GOP)
@@ -155,33 +136,29 @@ ATSC 3.0 signaling table containing transport and FEC parameters
 
 **MPI**: MMT Presentation Information - presentation timing table
 
-**ssbg_mode0**: Single Symbol per Block Group mode — one MMTP packet
-equals one source symbol
-
 ## 3. MMT Overview
 
 MMT uses a layered architecture:
 
 ```
-+---------------------------------------------+
-|              Application Layer              |
-+---------------------------------------------+
-|  MPU (Media Processing Unit)                |
-|  +----------+----------+----------+-------+ |
-|  |  MFU 0   |  MFU 1   |  MFU 2   |  ...  | |
-|  |  (IDR)   |  (P)     |  (P)     |       | |
-|  +----------+----------+----------+-------+ |
-+---------------------------------------------+
-|  MMTP (MMT Protocol)                        |
-|  +------------------------------------------+|
-|  | MMTP Header | Payload (MPU fragment)     ||
-|  | 12 bytes    | Variable                   ||
-|  +------------------------------------------+|
-+---------------------------------------------+
-|  Transport: UDP/IP (broadcast/multicast)    |
-|             QUIC stream (reliable unicast)  |
-|             QUIC datagram (unreliable)      |
-+---------------------------------------------+
+┌─────────────────────────────────────────────┐
+│              Application Layer              │
+├─────────────────────────────────────────────┤
+│  MPU (Media Processing Unit)                │
+│  ┌─────────┬─────────┬─────────┬─────────┐ │
+│  │  MFU 0  │  MFU 1  │  MFU 2  │   ...   │ │
+│  │ (IDR)   │ (P)     │ (P)     │         │ │
+│  └─────────┴─────────┴─────────┴─────────┘ │
+├─────────────────────────────────────────────┤
+│  MMTP (MMT Protocol)                        │
+│  ┌─────────────────────────────────────────┐│
+│  │ MMTP Header │ Payload (MPU fragment)   ││
+│  │ 12 bytes    │ Variable                 ││
+│  └─────────────────────────────────────────┘│
+├─────────────────────────────────────────────┤
+│  Transport: UDP/IP (broadcast/multicast)    │
+│             QUIC/WebTransport (unicast)     │
+└─────────────────────────────────────────────┘
 ```
 
 ### 3.1. MMTP Header Format
@@ -223,20 +200,12 @@ An MMT stream maps to MoQ tracks as follows:
 | Packet ID (video) | Track "video" |
 | Packet ID (audio) | Track "audio" |
 | MPU sequence | Group ID |
-| Packet Sequence Number | Object ID |
+| MFU sequence | Object ID |
 | AL-FEC repair | Track "video/repair" |
-
-For ATSC 3.0 ingest, the gateway preserves the original packet_id
-assignments from the MPT (MMT Package Table).  For MoQ-originated
-content using MMTP packaging, packet_id 0 is reserved for signaling
-messages (Section 4.5), with media tracks assigned sequentially
-starting from 1 (video=1, audio=2, etc.).  The mapping is signaled
-in the catalog.
 
 ### 4.2. Object Payload
 
-Each MoQ object carries exactly one MMTP packet, preserving the
-original wire format:
+Each MoQ object carries one MMTP packet:
 
 ```
 MoQ Object Payload {
@@ -245,435 +214,479 @@ MoQ Object Payload {
 }
 ```
 
-Publishers MUST NOT reassemble, re-fragment, or modify MMTP packet
-contents.  This enables relays to forward MMTP packets to
-broadcast-capable receivers without transcoding, and preserves
-the single-encoder pipeline where one MMTP output feeds both
-ATSC 3.0 RF and MoQ CDN simultaneously.
-
-This requirement applies to the MoQ object payload contents.
-MoQ-level operations — including caching, priority-based dropping,
-group expiry, and subscriber-specific filtering — operate on MoQ
-object metadata (group_id, object_id, priority) and are unaffected.
-
-The MMTP header is not encrypted, allowing relays to inspect packet
-type, sequence, and FEC metadata without accessing media content.
-
-MMTP packets are sized to fit within the network MTU (~T bytes,
-typically 1312 bytes for 1500-byte MTU minus protocol overhead).
-This MTU-sized design enables three delivery modes:
-
-| MoQ Forwarding Preference | Transport | Use Case |
-|---------------------------|-----------|----------|
-| Stream | Reliable QUIC stream | Low-loss unicast |
-| Datagram | QUIC datagram | Unreliable FEC-protected delivery |
-| (multicast) | UDP datagram | Scalable broadcast/multicast |
-
-When using the Datagram forwarding preference per
-[I-D.ietf-moq-transport], each MoQ datagram object carries one
-MMTP packet.  QUIC datagrams are unreliable — FEC is the loss
-recovery mechanism.  Subscribers using datagram delivery SHOULD
-subscribe to the repair track per [I-D.ramadan-moq-fec].
-
-The same MMTP packet works on all three transports without
-modification.  A receiver can combine source symbols from a QUIC
-stream with repair symbols from multicast UDP for FEC recovery.
-
-The latency difference between these delivery modes is significant:
-QUIC reliable stream retransmission requires 1-2 RTT (~100-200ms
-on wireless last-mile per typical WiFi/cellular jitter).  Datagram
-delivery with FEC (interleave depth D=1 at 30fps) recovers in
-~33ms — the time to receive one FEC block, with no round-trip
-needed.  Per [I-D.ietf-moq-transport] Section 6.1.2, the Datagram
-forwarding preference provides unreliable delivery suitable for
-MMTP tracks on lossy links where FEC provides loss recovery.
+Publishers MAY strip the MMTP header if subscribers negotiate
+raw ISOBMFF delivery via catalog `container` field.  When MMTP headers
+are stripped, the object payload contains only the MPU/ISOBMFF fragment.
+Note that stripping MMTP headers loses FEC Type, RAP flag, and
+timestamp metadata; receivers MUST rely on catalog and MoQ object
+headers for this information.
 
 ### 4.3. Group Boundaries
 
 Group boundaries align with MPU boundaries:
-- Group N contains all MMTP packets of MPU N
+- Group N contains all MFUs of MPU N
 - Object 0 of each group contains the MPU metadata (mmpu/moov boxes)
-- Subsequent objects contain MMTP packets with MFU payloads
+- Subsequent objects contain MFU payloads
 - The first object of each group SHOULD have RAP Flag = 1
 
-Object 0 carries MPU metadata (mmpu/moov boxes), serving the same
-role as a group header in other packaging formats.  Implementations
-with a packaging-specific group header mechanism SHOULD map MPU
-metadata to that mechanism.
+## 5. Media Fragment Unit (MFU) Mode
 
-### 4.4. Ordering Model
+For ultra-low-latency applications, MMT supports MFU mode where
+each video frame is delivered as a separate unit:
 
-The MPU Sequence Number (mpuSeq) maps to MoQ Group ID (Section 4.1)
-and serves as the ordering key across media decode, FEC recovery,
-and MoQ transport.  Implementation guidance for frame ordering and
-late-frame handling is provided in Appendix A.
+```
+Standard MPU Mode:
+  Object 0: [MMTP][MPU: mmpu+moov+moof+mdat containing all frames]
 
-### 4.5. Signaling Messages
-
-ATSC 3.0 MMTP streams carry signaling messages (PA, MPI, clock
-reference) in addition to media payloads.  When ingesting ATSC 3.0
-content:
-
-- **PA (Package Access) messages**: Publishers ingesting ATSC 3.0
-  content MUST publish PA messages containing the MPT (MMT Package
-  Table) on a dedicated signaling track (e.g., "signaling"), as the
-  MPT provides the authoritative packet_id-to-asset mapping.
-  MoQ-native publishers SHOULD publish PA messages for
-  interoperability with ATSC 3.0 receivers.
-- **MPI (MMT Presentation Information)**: Publishers MAY include
-  MPI data in the catalog or as signaling track objects.
-- **Clock references**: Mapped to MoQ object timestamps per
-  Section 9.
-
-Signaling messages that are only relevant to the broadcast transport
-layer (e.g., IP-level configuration) SHOULD NOT be forwarded to
-MoQ subscribers.
-
-## 5. Relay Transcoding
-
-Relays bridge between MMTP and LOC/CMAF formats to serve subscribers
-with different capabilities.  MMTP is the canonical format for
-FEC-enabled and multicast delivery; LOC is the lightweight format
-for non-FEC reliable unicast.
-
-### 5.1. MMTP to LOC Unwrapping
-
-Relays that receive MMTP packets from broadcast, multicast, or
-MMTP-publishing sources MAY offer the same content as LOC tracks
-for subscribers that do not need FEC:
-
-```json
-{
-  "tracks": [
-    { "name": "video",     "packaging": "mmtp",
-      "fec": { "algorithm": "raptorq", "repairTrack": "video/repair", ... } },
-    { "name": "video/repair", "packaging": "mmtp" },
-    { "name": "video-loc", "packaging": "loc", "altGroup": 1 }
-  ]
-}
+MFU Mode:
+  Object 0: [MMTP][MPU metadata: mmpu+moov+moof header]
+  Object 1: [MMTP][MFU: IDR frame NALUs]
+  Object 2: [MMTP][MFU: P frame NALUs]
+  Object 3: [MMTP][MFU: P frame NALUs]
+  ...
 ```
 
-When performing MMTP-to-LOC unwrapping, the relay:
+MFU mode enables:
+- Per-frame FEC protection
+- Frame-level prioritization (IDR vs P/B)
+- Lower end-to-end latency
 
-1. Reassembles MFU fragments from MMTP packets (using Packet Counter
-   and Packet Sequence Number)
-2. Strips the MMTP header and MPU framing
-3. Emits raw codec payload (NAL units) as LOC objects with appropriate
-   LOC properties:
-   - Timestamp: from MMTP header NTP timestamp
-   - Video Frame Marking: RAP flag maps to keyframe indicator
-   - Video Config: extracted from MPU metadata (mmpu/moov boxes)
+### 5.1. MFU Fragmentation
 
-The LOC track does not include FEC — subscribers on reliable QUIC
-streams rely on QUIC retransmission for loss recovery.
+When MFU size exceeds typical MTU (1200-1400 bytes for QUIC),
+publishers SHOULD:
 
-MMTP-to-LOC transcoding SHOULD be performed at the origin or
-first-hop relay, not at every edge server.  Relays SHOULD cache
-the LOC output so downstream subscribers receive LOC objects
-without repeated transcoding.
+1. Fragment MFU across multiple MMTP packets
+2. Set Packet Counter Flag (C=1) for reassembly tracking
+3. Publish all fragments as a single MoQ object (not multiple objects)
+4. Include the complete MFU in the object payload
 
-### 5.2. CMAF and MPU ISOBMFF Compatibility
+Receivers reassemble MFUs using the Packet Counter and Packet Sequence
+Number before media processing.  The MMTP fragmentation is transparent
+to MoQ; each MoQ object represents a complete, potentially multi-packet
+MFU.
 
-MMTP's MPU (Media Processing Unit) container is ISOBMFF, branded
-"mpuf" per [I-D.bouazizi-mmtp] Section 4.1.  This provides
-structural compatibility with CMAF [I-D.ietf-moq-cmsf]:
-
-| CMAF Concept | MPU/MFU Relationship |
-|--------------|----------------------|
-| Init segment (ftyp+moov) | MPU metadata (fragment_type=0) — byte-identical |
-| Fragment (moof+mdat) | Reconstructed from MFU metadata + payloads (not byte-identical) |
-| Sample | MFU payload (raw AVCC bytes extracted from mdat) |
-| Segment boundary | MPU/group boundary |
-
-CMAF fragments (moof+mdat) are NOT stored directly in MFU
-packets.  MFU payloads contain raw codec samples (AVCC NAL units
-for H.264, raw AAC frames for audio) extracted from the fMP4 mdat
-box.  A relay reconstructing CMAF from MMTP builds the moof box
-from MFU metadata:
-
-- `moof.trun.sample_size` from MFU payload length
-- `moof.trun.sample_flags` from MMTP RAP flag (keyframe)
-- `moof.tfdt.baseMediaDecodeTime` from MMTP NTP timestamp
-- `moof.mfhd.sequence_number` from MPU sequence number
-- `mdat` payload from reassembled MFU bytes (already AVCC)
-
-The reconstruction steps are:
-
-1. Collecting MFU fragments for each MPU (using Packet Sequence
-   Number ordering and fragmentation indicator)
-2. Building ISOBMFF boxes from MFU metadata (moov from MPU
-   metadata packet, moof+mdat constructed per sample)
-
-CDN operations (ad injection, ABR switching, manifest
-manipulation) work at the CMAF level after relay reassembly.  Ad
-injection can also operate at the MMTP level by replacing MPU
-sequences (groups) — the MPU sequence number provides natural
-splice points.
+For very large frames (e.g., 8K I-frames), consider:
+- Using QUIC's stream-based reliable delivery
+- Increasing QUIC max datagram size
+- Fragmenting at the MoQ object level with object dependencies
 
 ## 6. FEC Integration
 
-### 6.1. MMTP as Universal FEC Container
-
-MMTP is the FEC container for all MoQ transports.  Both source and
-repair tracks for FEC-enabled content use "mmtp" packaging per
-[I-D.ramadan-moq-fec].
-
-MMTP natively carries AL-FEC metadata in the MMTP header (FEC Type
-field) and in per-packet FEC Payload ID and OTI fields (see
-Section 3.1).  Repair track objects carry raw MMTP repair packets
-(FEC Type=2) without modification:
-
-- MMTP Header (12 bytes, FEC Type=2)
-- FEC Payload ID (9 bytes: SS_Start, RSB_length, RS_ID)
-- Object Transmission Information (12 bytes: RFC 6330 OTI)
-- Repair Symbol Data (T bytes)
-
-MoQ relays pass MMTP repair packets through as-is.  This passthrough
-design enables multi-path FEC delivery: identical MMTP repair packets
-across ATSC 3.0 RF, SSM, QUIC datagrams, and MoQ QUIC
-streams.  Receivers apply the same FEC recovery logic regardless of
-delivery path.
-
-### 6.2. Per-Group Encoding
-
-Each FEC source block is scoped to at most D consecutive MoQ
-groups, where D is the interleave depth (default 1).  With D=1,
-each group is independently encoded.  FEC blocks never span more
-than D groups.
-
-FEC parameters (algorithm, K, P, T, interleave depth) MAY be
-signaled in the catalog for discovery before the first repair
-packet.  FEC configuration is delivered via the AL-FEC signaling
-message per [ISO.23008-1] Section C.6 (message_id=0x0203).  The
-AL-FEC message carries maximum_k and maximum_p; SSB_length in
-each repair packet carries the actual K for that block.  K may
-vary per block (e.g., fewer symbols after a scene cut).
-Mid-stream K changes are signaled by a new AL-FEC message at
-source block boundaries.
-
-### 6.3. Source Symbol Model
-
-In ssbg_mode0 (the RECOMMENDED mode for MMTP), each MMTP source
-packet (FEC Type=1) is one source symbol.  The 32-bit Source FEC
-Payload ID (SS_ID per [ISO.23008-1] Section C.5.2) is a monotonic
-counter appended after the payload.  The receiver determines
-block membership and ESI using SS_Start and SSB_length from the
-corresponding repair packet (Section 6.2 of [I-D.ramadan-moq-fec]).
-
-This 1:1 mapping between MMTP packets and FEC source symbols means:
-- No FEC-layer fragmentation or reassembly
-- Each MoQ object = one MMTP packet = one source symbol
-- Same packet on QUIC streams, QUIC datagrams, and multicast UDP
-
-## 7. Field Mappings
-
-This section defines the field-level mappings between MoQ transport,
-LOC format, and MMTP.
-
-### 7.1. MoQ Transport ↔ MMTP
-
-The following fields map directly between MoQ transport framing and
-the MMTP header:
+MMT's AL-FEC framework supports multiple FEC schemes including
+RaptorQ [RFC6330] and Reed-Solomon [RFC5510],
+with parameters signaled via MMTP signaling messages or, in
+ATSC 3.0, via S-TSID (which is part of the ROUTE transport layer).
+For MoQ, FEC repair uses the model defined in
+[I-D.ramadan-moq-fec]:
 
 ```
-MoQ track name       → MMTP packet_id (via catalog)
-MoQ group_id         → MMTP MPU Sequence Number
-MoQ object_id        → MMTP Packet Sequence Number within MPU
-MoQ forwarding pref  → QUIC stream (reliable) or datagram (unreliable)
+Source Track: video
+  └── Objects: MMTP packets with FEC Type=0 or 1 (source)
+
+Repair Track: video/repair
+  └── Objects: MMTP packets with FEC Type=2 (repair)
 ```
 
-The MoQ track name to MMTP packet_id mapping is established in the
-catalog.  Each track entry in the catalog corresponds to one MMTP
-packet_id.  For multicast endpoints, the `packetId` field in the multicast
-catalog endpoint makes this mapping explicit.
+### 6.1. Interleaving
 
-MoQ group_id and MMTP MPU Sequence Number are numerically identical.
-MoQ object_id maps to MMTP Packet Sequence Number within the MPU.
-Object 0 of each group carries MPU metadata (mmpu/moov); subsequent
-objects carry MFU payloads.
-
-### 7.2. MMTP → LOC Unwrapping
-
-The field mapping for MMTP-to-LOC unwrapping (Section 5.1):
+MMT AL-FEC interleaves source symbols across multiple MFUs:
 
 ```
-MMTP packet_id       → MoQ track name (via catalog)
-MMTP MPU Seq Num     → MoQ group_id
-MMTP MFU fragments   → Reassemble → LOC frame object
-MMTP Timestamp       → LOC timestamp property
-MMTP RAP flag        → LOC video frame marking
-MMTP MPU metadata    → LOC video config property
+MFU:        0    1    2    3    4    5    6    7
+            │    │    │    │    │    │    │    │
+Block 0:    S0   S1   S2   S3   ─────────────────►  R0, R1
+Block 1:                        S4   S5   S6   S7 ► R2, R3
 ```
 
-### 7.3. FEC Field Mapping
+Default interleave depth varies by application:
+- ATSC 3.0: 30-60 frames (~1-2 seconds at 30fps)
+- ARIB STD-B60: 60 frames (~2 seconds at 30fps)
+- Low-latency: 4-8 frames (~130-270ms at 30fps)
 
-MMTP carries FEC metadata natively, eliminating the need for MoQ
-extension headers:
+### 6.2. OTI Signaling
+
+The S-TSID table contains RaptorQ OTI (Object Transmission Info):
 
 ```
-MMTP FEC Type=1      → Source symbol (ssbg_mode0: 1 packet = 1 symbol)
-MMTP FEC Type=2      → Repair symbol
-MMTP Source FEC PID   → SS_ID = source ESI
-MMTP Repair FEC PID   → SS_Start (SBN), RSB_length (K), RS_ID (repair ESI)
-AL-FEC signaling msg  → RFC 6330 OTI (12 bytes via message_id 0x0203)
-Catalog fec fields    → Discovery before first packet
+S-TSID {
+  source_filter (S,G address),
+  fec_oti {
+    transfer_length (40 bits),
+    symbol_size (16 bits),
+    num_source_blocks (8 bits),
+    num_sub_blocks (16 bits),
+    alignment (8 bits),
+  }
+}
 ```
 
-Source packets (FEC Type=1) carry a Source FEC Payload ID with the
-source symbol's ESI.  Repair packets (FEC Type=2) carry a Repair FEC
-Payload ID (SS_Start, RSB_length, RS_ID) plus the full 12-byte
-RFC 6330 OTI, enabling self-describing FEC recovery without prior
-catalog access.
+For MoQ, OTI is signaled via FEC_CONFIG message per
+[I-D.ramadan-moq-fec] Section 4.
+
+## 7. FEC_CONFIG Message
+
+The FEC_CONFIG message and its wire format are defined normatively
+in [I-D.ramadan-moq-fec] Section 4.1.  This document does not
+redefine FEC_CONFIG but specifies MMT-specific considerations for
+its use.
+
+### 7.1. MMT-Specific FEC_CONFIG Usage
+
+When used with MMT packaging, the FEC_CONFIG fields map as follows:
+
+- **FEC Algorithm**: Typically 0x02 (RaptorQ) for ATSC 3.0 ingest,
+  or as specified in MMTP AL-FEC signaling
+- **Source Symbols Per Block**: Corresponds to the number of MFUs
+  (or MMTP packets) covered by one FEC block
+- **Interleave Depth**: Number of MPU frames spanned by each FEC
+  block, matching the original broadcast FEC interleave depth
+- **OTI**: For RaptorQ, the 12-byte concatenation of Common FEC OTI
+  and Scheme-Specific FEC OTI per [RFC6330]
+
+See [I-D.ramadan-moq-fec] for the complete message format, field
+definitions, algorithm registry, and precedence rules.
+
+### 7.2. Repair Track Discovery
+
+When FEC is enabled, the repair track uses the naming convention
+defined in [I-D.ramadan-moq-fec] Section 6.1:
+
+```
+Source Track:  [namespace, track_name]
+Repair Track:  [namespace, track_name, "repair"]
+```
+
+The subscriber MUST subscribe to the repair track separately.
+The repair track uses lower priority (typically 7) so repair
+symbols are dropped first under congestion.
+
+### 7.3. Multicast Delivery of FEC_CONFIG
+
+For multicast (SSM/ASM) delivery where bidirectional signaling is
+not available, FEC_CONFIG parameters are conveyed via:
+
+1. **MMTP AL-FEC Signaling (message_id=0x0203)**: In-band delivery
+   per ISO/IEC 23008-1:2023 Amendment 1:2025
+
+2. **MoQ Catalog Extension**: Out-of-band delivery via catalog JSON:
+
+```json
+{
+  "tracks": [{
+    "name": "video",
+    "fec": {
+      "algorithm": "raptorq",
+      "sourceSymbols": 32,
+      "repairSymbols": 8,
+      "interleaveDepth": 30,
+      "symbolSize": 1312,
+      "repairTrack": "video/repair"
+    }
+  }]
+}
+```
 
 ## 8. Multicast Integration
 
 MMT content can be delivered via IP multicast (SSM, AMT) and TreeDN
-for scalable distribution.
+for scalable distribution.  Platform-specific delivery paths, SSM
+group allocation, TreeDN integration with ISP router AMT deployment,
+DePIN incentives, and IWA home gateway architecture are defined in
+[I-D.ramadan-moq-multicast].
 
 When MMT is delivered over multicast, MMTP packets are transmitted
-as UDP datagrams with the standard MMTP header intact.  MMTP is
-self-describing — each packet carries track routing (packet_id),
-timestamps, sequence numbers, and FEC metadata natively.  No
-additional multicast framing or encapsulation is needed.
+as UDP datagrams with the standard MMTP header intact.  MoQ relays
+at network edges terminate the multicast path and bridge MMTP
+content into the MoQ application layer via QUIC/WebTransport.
 
-MMTP over SSM operates as a unidirectional data stream and does not
-require a MoQ session for reception.  This is the native delivery
-path for ATSC 3.0 and ARIB STD-B60 receivers.  MoQ relays at
-network edges terminate the multicast path and bridge MMTP content
-into the MoQ application layer via QUIC/WebTransport.
-
-The multicast catalog extension for endpoint discovery and multi-path
-delivery is defined in [I-D.ramadan-moq-multicast].
+For ATSC 3.0 and ARIB STD-B60 receivers, MMTP over SSM is the
+native delivery path and requires no protocol translation.
 
 ## 9. ARIB STD-B60 Compatibility
 
-ARIB STD-B60 [ARIB-B60] (Japan) uses the same [ISO.23008-1]
-foundation as ATSC 3.0, with the same MMTP wire format per
-[I-D.bouazizi-mmtp] Section 3.  MMTP packets are interoperable
-between ATSC 3.0 and ARIB STD-B60 systems at the wire level.
+ARIB STD-B60 (Japan's MMT-based broadcasting standard) uses the
+same ISO 23008-1 foundation as ATSC 3.0 with the following specific
+considerations:
 
-Key differences from ATSC 3.0:
+### 9.1. Clock Reference
 
-- **Signaling**: ARIB STD-B60 uses TLV-SI (Type-Length-Value
-  Service Information) for service discovery and signaling, while
-  ATSC 3.0 uses SLT (Service Layer Table) and S-TSID (Service-based
-  Transport Session Instance Description).  Both carry equivalent
-  information for MMTP session configuration.
+ARIB STD-B60 uses UTC wallclock timestamps in NTP short format,
+consistent with ISO 23008-1.  The MMTP Timestamp field carries the
+UTC send time of the packet, which maps to MoQ object timestamps.
 
-- **Timestamp epoch**: MMTP timestamps use NTP short format
-  (32-bit: 16-bit seconds + 16-bit fractional) per
-  [I-D.bouazizi-mmtp] Section 3 `timestamp` field.  ARIB STD-B60
-  uses UTC epoch.  ATSC 3.0 may use GPS epoch in some
-  implementations.  Publishers bridging between ATSC 3.0 (which
-  may use GPS epoch) and ARIB STD-B60 (UTC epoch) MUST normalize
-  timestamps to UTC for MoQ delivery.
+The MMTP Timestamp uses NTP short format (32-bit: 16-bit seconds +
+16-bit fractional seconds relative to NTP epoch):
 
-- **FEC**: Both systems support AL-FEC via the same MMTP FEC Type
-  fields.  FEC parameters are carried in S-TSID (ATSC 3.0) or
-  TLV-SI (ARIB) for broadcast, and in the MoQ catalog `fec`
-  extension (Section 10) for MoQ delivery.
+```
+MoQ Timestamp (seconds) = MMTP Timestamp upper 16 bits
+                          + (lower 16 bits / 65536)
+```
 
-MMTP timestamps map directly to MoQ object timestamps, enabling
-seamless bridging between broadcast and MoQ delivery paths.
+Note: This differs from MPEG-2 TS, which uses a 90kHz PTS/DTS clock.
 
-## 10. Catalog Signaling
+### 9.2. 8K UHDTV Support
 
-The MoQ catalog signals MMT packaging via the `packaging` field
-per [I-D.ietf-moq-catalogformat].
+ARIB STD-B60 supports 8K UHDTV (7680x4320) via HEVC Main 10 profile
+at Level 6.1 (4:2:0, 10-bit).
+For efficient 8K delivery:
 
-### 10.1. Packaging Registration
+1. **Tiled Delivery**: MoQ Group boundaries SHOULD align with HEVC
+   CTU rows for spatial random access
+2. **Parallel Decoding**: Multiple MoQ tracks MAY carry tile regions
+   for parallel decode
+3. **Bandwidth**: 8K @ 60fps requires ~80-100 Mbps; FEC adds 25%
 
-This document registers "mmtp" as a MoQ Streaming Format packaging
-value:
+Example 8K track structure:
+```
+namespace: "live/8k"
+tracks:
+  - video/tile_0_0  (top-left quadrant)
+  - video/tile_0_1  (top-right quadrant)
+  - video/tile_1_0  (bottom-left quadrant)
+  - video/tile_1_1  (bottom-right quadrant)
+  - video/repair    (FEC for all tiles)
+```
 
-| Packaging | Description | Reference |
-|-----------|-------------|-----------|
-| "mmtp" | MMTP-encapsulated media per [I-D.bouazizi-mmtp] | This document |
+### 9.3. Hybridcast Integration
 
-MMTP packaging indicates that each MoQ object payload contains one
-MMTP packet (source or repair).  The MMTP header provides packet
-type, timestamp, sequence number, and FEC metadata natively.
+ARIB defines Hybridcast for companion device synchronization
+(second screen experiences).  When bridging Hybridcast services:
 
-Example catalog with FEC-enabled MMTP tracks and non-FEC LOC
-alternative:
+1. Include timeline alignment metadata in MoQ catalog
+2. Preserve MMT Composition Timeline (CT) information
+3. Signal synchronization points via MoQ object timestamps
 
+Catalog extension for Hybridcast:
 ```json
 {
-  "version": 1,
-  "streamingFormat": 1,
-  "streamingFormatVersion": "0.2",
-  "tracks": [
-    {
-      "name": "video",
-      "packaging": "mmtp",
-      "selectionParams": {
-        "codec": "avc1.64001f",
-        "width": 1920,
-        "height": 1080,
-        "framerate": 30
-      },
-      "fec": {
-        "algorithm": "raptorq",
-        "symbolSize": 1312,
-        "sourceSymbols": 32,
-        "repairSymbols": 8,
-        "repairTrack": "video/repair"
-      }
-    },
-    { "name": "video/repair", "packaging": "mmtp" },
-    { "name": "video-loc", "packaging": "loc", "altGroup": 1 }
-  ]
+  "hybridcast": {
+    "timelineId": "urn:isdb:timeline:ct",
+    "ptsOffset": 0,
+    "syncToleranceMs": 100
+  }
 }
 ```
 
-Subscribers choose MMTP packaging for FEC-protected delivery on
-any transport (streams, datagrams, multicast) or LOC packaging for
-lightweight non-FEC delivery on reliable QUIC streams.
+### 9.4. Typical FEC Parameters
 
-### 10.2. Backwards Compatibility
+ARIB STD-B60 deployments typically use more conservative FEC
+parameters than ATSC 3.0:
 
-Publishers offering MMTP tracks SHOULD also offer LOC or CMAF
-alternatives via the `altGroup` mechanism
-([I-D.ietf-moq-catalogformat] Section 3.2).  Subscribers that do
-not recognize the "mmtp" packaging value ignore those tracks and
-subscribe to supported alternatives.  Unknown catalog extensions
-are ignored per [I-D.ietf-moq-catalogformat] Section 3.1.
+| Parameter | ARIB STD-B60 Typical | ATSC 3.0 Typical |
+|-----------|-----------------|------------------|
+| K (source symbols) | 64 | 32 |
+| Interleave depth | 60 frames | 30 frames |
+| Symbol size | 1316 bytes | 1312 bytes |
+| Overhead | 20-30% | 25% |
 
-## 11. Security Considerations
+Publishers SHOULD preserve original FEC parameters when ingesting
+ARIB STD-B60 content.
+
+## 10. Transport Hierarchy
+
+Clients SHOULD attempt transports in preference order.  The transport
+hierarchy for native clients (TV, mobile) and browser clients is
+defined in [I-D.ramadan-moq-multicast] Section 6.
+
+For MMT-specific deployments, AL-FEC (Section 6) is essential on
+SSM/AMT paths since there is no retransmission.  On MoQ/QUIC paths,
+FEC reduces retransmission latency but QUIC provides a reliable
+fallback.
+
+## 11. Catalog Signaling
+
+The MoQ catalog indicates MMT container format and multicast endpoints.
+
+### 11.1. Container Values
+
+| Value | Description |
+|-------|-------------|
+| "isobmff" | Raw ISOBMFF/MPU (default, MMTP header stripped) |
+| "mmtp" | MMTP-encapsulated MPU (ISOBMFF) |
+| "mfu" | MMTP MFU mode (per-frame objects) |
+
+Example:
+```json
+{
+  "tracks": [{
+    "name": "video",
+    "container": "mmtp",
+    "codec": "avc1.64001f",
+    "width": 1920,
+    "height": 1080,
+    "framerate": 30
+  }]
+}
+```
+
+### 11.2. S-TSID to MoQ Catalog Conversion
+
+When ingesting ATSC 3.0 content delivered via ROUTE, generate MoQ
+catalog from the S-TSID signaling table (defined in ATSC A/331 for
+the ROUTE transport layer).  For MMT-delivered content, equivalent
+parameters are obtained from MMTP signaling messages (MPT/MPI):
+
+```
+S-TSID Input:
+<S-TSID>
+  <RS sIpAddr="192.168.1.100" dIpAddr="232.1.1.50" dPort="5000">
+    <LS tsi="1" bw="5000000">
+      <SrcFlow rt="true">
+        <ContentInfo>
+          <MediaInfo contentType="video" repId="1080p"/>
+        </ContentInfo>
+        <Payload codePoint="128" formatId="2"/>
+      </SrcFlow>
+      <RepairFlow>
+        <FECParameters maximumDelay="1000" overhead="25"
+                       fecOTI="K=32;T=1312;Z=4">
+          <ProtectedObject tsi="1">
+            <SourceTOI x="0" y="255"/>
+          </ProtectedObject>
+        </FECParameters>
+      </RepairFlow>
+    </LS>
+  </RS>
+</S-TSID>
+
+MoQ Catalog Output:
+{
+  "version": 1,
+  "namespace": "atsc/service_1",
+  "tracks": [{
+    "name": "video",
+    "container": "mmtp",
+    "codec": "avc1.64001f",
+    "bitrate": 5000000,
+    "fec": {
+      "algorithm": "raptorq",
+      "sourceSymbols": 32,
+      "repairSymbols": 8,
+      "symbolSize": 1312,
+      "interleaveDepth": 4,
+      "repairTrack": "video/repair"
+    }
+  }],
+  "multicast": {
+    "endpoints": [{
+      "protocol": "ssm",
+      "source": "192.168.1.100",
+      "group": "232.1.1.50",
+      "port": 5000,
+      "tsi": 1,
+      "tracks": ["video", "video/repair"]
+    }]
+  }
+}
+```
+
+The `multicast` field in the output uses the extended format defined
+in [I-D.ramadan-moq-multicast] Section 7.2.  Conversion rules:
+- `RS@sIpAddr` → `multicast.endpoints[].source`
+- `RS@dIpAddr` → `multicast.endpoints[].group`
+- `RS@dPort` → `multicast.endpoints[].port`
+- `LS@tsi` → `multicast.endpoints[].tsi`
+- `LS@bw` → `track.bitrate`
+- `FECParameters@overhead` → `fec.p` (computed as K × overhead / 100)
+- `fecOTI` K,T,Z → `fec.k`, `fec.symbolSize`, `fec.interleaveDepth`
+
+### 11.3. MoQ Catalog to S-TSID Conversion
+
+When generating ATSC-compatible output, convert MoQ catalog to S-TSID:
+
+```
+MoQ Catalog Input:
+{
+  "tracks": [{
+    "name": "video",
+    "bitrate": 5000000,
+    "fec": {
+      "algorithm": "raptorq",
+      "sourceSymbols": 32,
+      "repairSymbols": 8,
+      "symbolSize": 1312,
+      "interleaveDepth": 4,
+      "repairTrack": "video/repair"
+    }
+  }],
+  "multicast": {
+    "endpoints": [{
+      "source": "192.168.1.100",
+      "group": "232.1.1.50",
+      "port": 5000,
+      "tsi": 1
+    }]
+  }
+}
+
+S-TSID Output:
+<S-TSID xmlns="tag:atsc.org,2016:XMLSchemas/ATSC3/Delivery/S-TSID/1.0/">
+  <RS sIpAddr="192.168.1.100" dIpAddr="232.1.1.50" dPort="5000">
+    <LS tsi="1" bw="5000000">
+      <SrcFlow rt="true" minBuffSize="5000000">
+        <ContentInfo>
+          <MediaInfo contentType="video"/>
+        </ContentInfo>
+        <Payload codePoint="128" formatId="2" srcFecPayloadId="6"/>
+      </SrcFlow>
+      <RepairFlow>
+        <FECParameters maximumDelay="133" overhead="25"
+                       fecOTI="F=32;T=1312;Z=4;N=1;Al=8">
+        </FECParameters>
+      </RepairFlow>
+    </LS>
+  </RS>
+</S-TSID>
+```
+
+Conversion rules:
+- `multicast.endpoints[].source` → `RS@sIpAddr`
+- `fec.p / fec.k × 100` → `FECParameters@overhead`
+- `fec.interleaveDepth × frameDuration` → `FECParameters@maximumDelay`
+
+### 11.4. Multicast Endpoint Catalog Extension
+
+The multicast catalog extension — including simple and extended
+formats and format detection rules — is defined in
+[I-D.ramadan-moq-multicast] Section 7.
+
+When converting S-TSID to MoQ catalog (Section 11.2), the `multicast`
+field in the output catalog MUST conform to the extended format
+defined in [I-D.ramadan-moq-multicast] Section 7.2, using the
+`endpoints` array to represent per-TSI multicast groups.
+
+## 12. Security Considerations
 
 MMT content protection uses Common Encryption (CENC) which is
 preserved through MoQ transport.  The MMTP header is not encrypted,
 allowing relays to inspect packet type and sequence without
 accessing media content.
 
-When bridging content-protected ATSC 3.0 streams, DRM license
-acquisition differs: broadcast uses in-band EME key delivery, while
-MoQ requires out-of-band license server URLs.  Publishers bridging
-content-protected streams SHOULD include license server
-configuration in the catalog or signaling track.  The specific DRM
-bridging mechanism is out of scope for this document.
+### 12.1. Multicast Security
 
-### 11.1. Multicast Security
+Multicast-specific security considerations (source authentication,
+replay protection, AMT relay trust) are defined in
+[I-D.ramadan-moq-multicast] Section 8.
 
-For MMTP over multicast, the MMTP header is not encrypted, allowing
-SSM (S,G) filtering and sequence-number-based replay detection.
-MMTP-native authentication mechanisms per [I-D.bouazizi-mmtp] apply,
-including signed_mmt_message for per-packet authentication.
-AMT relay trust is delegated per [RFC7450].
+## 13. IANA Considerations
 
-## 12. IANA Considerations
+This document requests registration of container format identifiers
+in the "MoQ Container Formats" registry:
 
-This document requests registration of a MoQ Streaming Format
-packaging value in the registry established by
-[I-D.ietf-moq-catalogformat]:
+| Value | Description | Reference |
+|-------|-------------|-----------|
+| "mmtp" | MMTP-encapsulated MPU (ISOBMFF) | This document |
+| "mfu" | MMTP MFU mode | This document |
 
-| Packaging | Description | Reference |
-|-----------|-------------|-----------|
-| "mmtp" | MMTP-encapsulated media per [I-D.bouazizi-mmtp] | This document |
+This document also requests registration of MoQ message type
+(shared with [I-D.ramadan-moq-fec]):
 
-## 13. References
+| Type | Name | Reference |
+|------|------|-----------|
+| 0x50 | FEC_CONFIG | This document |
 
-### 13.1. Normative References
+## 14. References
 
 [RFC2119]
     Bradner, S., "Key words for use in RFCs to Indicate
@@ -683,6 +696,11 @@ packaging value in the registry established by
     Leiba, B., "Ambiguity of Uppercase vs Lowercase in
     RFC 2119 Key Words", BCP 14, RFC 8174, May 2017.
 
+[ISO.23008-1]
+    ISO, "Information technology - High efficiency coding and
+    media delivery in heterogeneous environments - Part 1:
+    MPEG media transport (MMT)", ISO/IEC 23008-1:2023.
+
 [RFC6330]
     Luby, M., et al., "RaptorQ Forward Error Correction Scheme
     for Object Delivery", RFC 6330, August 2011.
@@ -691,47 +709,13 @@ packaging value in the registry established by
     Curley, L., et al., "Media over QUIC Transport",
     draft-ietf-moq-transport (work in progress).
 
-[I-D.bouazizi-mmtp]
-    Bouazizi, I., "MMT Protocol (MMTP)",
-    draft-bouazizi-mmtp-01 (work in progress).
-
-### 13.2. Informative References
-
-[I-D.ietf-moq-loc]
-    Jennings, C., et al., "Low Overhead Container for Media
-    over QUIC", draft-ietf-moq-loc (work in progress).
-
-[I-D.ietf-moq-catalogformat]
-    Curley, L., et al., "Common Media Server Format for
-    Media over QUIC", draft-ietf-moq-catalogformat
-    (work in progress).
-
-[I-D.ietf-moq-cmsf]
-    Law, W., "CMSF: A CMAF Compliant Implementation of
-    MOQT Streaming Format", draft-ietf-moq-cmsf
-    (work in progress).
-
 [I-D.ramadan-moq-fec]
     Ramadan, O., "Forward Error Correction for Media over QUIC",
     draft-ramadan-moq-fec (work in progress).
 
-[I-D.ramadan-moq-multicast]
-    Ramadan, O., "Multicast Delivery and Endpoint Discovery
-    for Media over QUIC", draft-ramadan-moq-multicast
-    (work in progress).
-
-[RFC7450]
-    Bumgardner, G., "Automatic Multicast Tunneling", RFC 7450,
-    DOI 10.17487/RFC7450, February 2015.
-
-[ISO.23008-1]
-    ISO, "Information technology - High efficiency coding and
-    media delivery in heterogeneous environments - Part 1:
-    MPEG media transport (MMT)", ISO/IEC 23008-1:2023.
-    (Informative.  A freely available description of the MMTP
-    wire format is provided by [I-D.bouazizi-mmtp].  The
-    normative ISO standard provides additional detail including
-    AL-FEC Annex C and complete signaling table definitions.)
+[RFC5510]
+    Lacan, J., et al., "Reed-Solomon Forward Error Correction
+    (FEC) Schemes", RFC 5510, April 2009.
 
 [ATSC-A331]
     ATSC, "Signaling, Delivery, Synchronization, and Error
@@ -741,27 +725,169 @@ packaging value in the registry established by
     ARIB, "MMT-Based Media Transport Scheme in Digital
     Broadcasting Systems", ARIB STD-B60, Version 1.14.
 
-## Appendix A. Implementation Guidance: Frame Ordering
+[I-D.ramadan-moq-multicast]
+    Ramadan, O., "Multicast Delivery and Endpoint Discovery
+    for Media over QUIC", draft-ramadan-moq-multicast
+    (work in progress).
 
-This appendix provides non-normative guidance for receivers handling
-MMTP media frames delivered via MoQ.
+## Appendix A. Bandwidth Comparison
 
-The MPU Sequence Number (mpuSeq), mapped to MoQ Group ID, is the
-ordering key across media decode, FEC recovery, and MoQ transport.
-Receivers tracking the last decoded mpuSeq can apply the following
-heuristics:
+FEC signaling bandwidth overhead:
 
-- **Keyframes (RAP=1)**: Always decode; reset decode-order tracking.
-- **Delta frames (RAP=0)**: Decode only if mpuSeq > lastDecodedMpuSeq.
-  Dropping out-of-order delta frames avoids reference frame mismatch
-  when frames arrive via different delivery paths with different
-  latencies.
-- **FEC repair**: Use mpuSeq to derive SBN for source block alignment.
+### A.1. Per-Session Overhead (One-Time)
 
-This ordering model applies identically across MoQ unicast, SSM,
-and ATSC 3.0 broadcast delivery paths.  Receivers MAY
-implement alternative strategies (e.g., jitter buffers, reordering
-windows) appropriate to their deployment context.
+| Method | Size | When Sent |
+|--------|------|-----------|
+| FEC_CONFIG (0x50) | ~30 bytes | After SUBSCRIBE_OK |
+| MMTP AL-FEC (0x0203) | ~42 bytes | First signaling packet |
+| Catalog JSON FEC | ~100 bytes | Catalog fetch |
+
+### A.2. Per-Object Overhead (Recurring)
+
+| Method | Size | Frequency |
+|--------|------|-----------|
+| LOC Extension | 8 bytes | Every object |
+| MMTP Header | 12 bytes | Every packet |
+| FEC_CONFIG | 0 bytes | N/A (one-time) |
+
+### A.3. Total Overhead Analysis
+
+For a 30fps stream with k=32 source symbols per FEC block:
+
+| Method | Overhead/second | Overhead/hour |
+|--------|-----------------|---------------|
+| FEC_CONFIG | ~0.03 KB | ~0.1 KB |
+| LOC Extension | ~0.24 KB | ~0.86 MB |
+| MMTP (source only) | ~0.36 KB | ~1.3 MB |
+| MMTP + Repair | ~0.50 KB | ~1.8 MB |
+
+FEC_CONFIG has the lowest per-session overhead and zero
+per-object overhead, making it ideal for unicast MoQ.
+
+MMTP AL-FEC signaling has higher initial overhead but
+works without bidirectional signaling (multicast).
+
+### A.4. Recommendations
+
+| Use Case | Recommended Method |
+|----------|-------------------|
+| MoQ Unicast | FEC_CONFIG |
+| SSM Multicast | MMTP AL-FEC |
+| Adaptive FEC | FEC_CONFIG + dynamic updates |
+| Hybrid (MoQ + SSM) | Both (MMTP in-band, FEC_CONFIG for unicast) |
+
+## Appendix B. S-TSID Conversion Example
+
+Complete example showing bidirectional conversion between
+ATSC S-TSID and MoQ catalog for a multi-track service.
+
+### B.1. Original ATSC S-TSID
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<S-TSID xmlns="tag:atsc.org,2016:XMLSchemas/ATSC3/Delivery/S-TSID/1.0/">
+  <RS sIpAddr="10.0.0.1" dIpAddr="232.1.1.10" dPort="5000">
+    <!-- Video 1080p -->
+    <LS tsi="1" bw="8000000">
+      <SrcFlow rt="true" minBuffSize="8000000">
+        <ContentInfo>
+          <MediaInfo contentType="video" repId="1080p" lang="en"/>
+        </ContentInfo>
+        <EFDT>
+          <FDT-Instance Expires="4294967295">
+            <File Content-Location="video/1080p/init.mp4" TOI="1"/>
+          </FDT-Instance>
+        </EFDT>
+        <Payload codePoint="128" formatId="2" srcFecPayloadId="6"/>
+      </SrcFlow>
+      <RepairFlow>
+        <FECParameters maximumDelay="1000" overhead="25"
+                       fecOTI="F=32;T=1312;Z=30;N=1;Al=8">
+          <ProtectedObject tsi="1">
+            <SourceTOI x="0" y="65535"/>
+          </ProtectedObject>
+        </FECParameters>
+      </RepairFlow>
+    </LS>
+    <!-- Audio Stereo -->
+    <LS tsi="2" bw="128000">
+      <SrcFlow rt="true">
+        <ContentInfo>
+          <MediaInfo contentType="audio" repId="stereo" lang="en"/>
+        </ContentInfo>
+        <Payload codePoint="128" formatId="2"/>
+      </SrcFlow>
+    </LS>
+  </RS>
+</S-TSID>
+```
+
+### B.2. Converted MoQ Catalog
+
+```json
+{
+  "version": 1,
+  "namespace": "atsc/service_broadcast",
+  "generatedAt": "2026-07-15T10:30:00Z",
+  "tracks": [
+    {
+      "name": "video/1080p",
+      "container": "mmtp",
+      "codec": "avc1.64001f",
+      "width": 1920,
+      "height": 1080,
+      "framerate": 30,
+      "bitrate": 8000000,
+      "language": "en",
+      "fec": {
+        "algorithm": "raptorq",
+        "sourceSymbols": 32,
+        "repairSymbols": 8,
+        "symbolSize": 1312,
+        "interleaveDepth": 30,
+        "repairTrack": "video/1080p/repair"
+      }
+    },
+    {
+      "name": "video/1080p/repair",
+      "container": "fec-repair",
+      "priority": 7
+    },
+    {
+      "name": "audio/stereo",
+      "container": "mmtp",
+      "codec": "mp4a.40.2",
+      "sampleRate": 48000,
+      "channelCount": 2,
+      "bitrate": 128000,
+      "language": "en"
+    }
+  ],
+  "multicast": {
+    "endpoints": [
+      {
+        "protocol": "ssm",
+        "source": "10.0.0.1",
+        "group": "232.1.1.10",
+        "port": 5000,
+        "tsi": 1,
+        "tracks": ["video/1080p", "video/1080p/repair"]
+      },
+      {
+        "protocol": "ssm",
+        "source": "10.0.0.1",
+        "group": "232.1.1.10",
+        "port": 5000,
+        "tsi": 2,
+        "tracks": ["audio/stereo"]
+      }
+    ],
+    "amtFallback": {
+      "discovery": "driad"
+    }
+  }
+}
+```
 
 ## Authors' Addresses
 
