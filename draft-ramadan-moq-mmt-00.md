@@ -229,6 +229,28 @@ Group boundaries align with MPU boundaries:
 - Subsequent objects contain MFU payloads
 - The first object of each group SHOULD have RAP Flag = 1
 
+The mapping above realizes the Chunk-to-Object mode of
+[I-D.wilaw-moq-cmafpackaging] when the source is CMAF: an MMT MPU
+corresponds to a CMAF Fragment, each MFU corresponds to a CMAF
+Chunk, and each MFU is published as exactly one MoQ object.
+
+### 4.4. Switching Sets
+
+When multiple tracks represent alternative renditions of the same
+media (e.g., an ABR ladder), they form a switching set as defined
+in [I-D.wilaw-moq-cmafpackaging].  MoQ Group numbers MUST be
+media-time-aligned across all tracks of a switching set so that
+subscribers can switch at group boundaries without discontinuity.
+
+### 4.5. Init Segment Signaling
+
+Publishers MAY signal MPU metadata (mmpu/moov) either inline as
+Object 0 of each group (the default form in Section 4.3), or as a
+separate init track per [I-D.wilaw-moq-cmafpackaging] Section 4.2.
+The catalog field `initMode` (values: "inline" | "track") selects
+between the two; subscribers determine the active mode from the
+catalog before issuing SUBSCRIBE.
+
 ## 5. Media Fragment Unit (MFU) Mode
 
 For ultra-low-latency applications, MMT supports MFU mode where
@@ -729,6 +751,11 @@ This document also requests registration of MoQ message type
     Ramadan, O., "Multicast Delivery and Endpoint Discovery
     for Media over QUIC", draft-ramadan-moq-multicast
     (work in progress).
+
+[I-D.wilaw-moq-cmafpackaging]
+    Law, W., "CMAF Packaging for Media over QUIC",
+    draft-wilaw-moq-cmafpackaging-01 (work in progress),
+    April 2026.
 
 ## Appendix A. Bandwidth Comparison
 
