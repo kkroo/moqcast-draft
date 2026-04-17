@@ -437,6 +437,10 @@ Examples:
 | ["broadcast", "video", "1080p"] | ["broadcast", "video", "1080p", "repair"] |
 | ["stream", "audio", "en"] | ["stream", "audio", "en", "repair"] |
 
+These name components are commonly rendered in slash-separated
+form for URIs and logging (e.g., "live/video" and
+"live/video/repair"); the normative form is the tuple.
+
 This convention allows subscribers to discover repair tracks without
 additional signaling.
 
