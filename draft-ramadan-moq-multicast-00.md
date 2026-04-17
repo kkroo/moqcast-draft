@@ -530,8 +530,42 @@ of the multicast configuration:
   - "signed_mmt_message": MMTP-native per-packet authentication
     per [I-D.bouazizi-mmtp] Section 3.1
   - "alta": ALTA per [I-D.krose-mboned-alta] — lightweight
-    asymmetric loss-tolerant authentication, carried in MMTP
-    header extensions
+    asymmetric loss-tolerant authentication
+
+#### 7.2.1. Authentication Carrier by Wire Layer (ALTA)
+
+ATSC 3.0 defines two independent multicast transports with
+independent authentication envelopes, and deployments MAY use
+either or both:
+
+- **ROUTE** (ALC over LCT) carries auth in an LCT `EXT_AUTH` header
+  extension per [RFC5775] Section 5.2, demultiplexed by ASID.  ATSC
+  3.0 assigns ASID = 0 to TESLA-style authentication (A/331 §7.1).
+  ALTA on the ROUTE/ALC path SHOULD register a distinct ASID (this
+  document suggests 10) so that both schemes can coexist in the
+  EXT_AUTH registry slot without mutual clobbering.
+- **MMTP** carries auth in an MMTP header extension per
+  [I-D.bouazizi-mmtp] Section 3.1.  ATSC A/360 Section 5.2.2.5
+  defines `signed_mmt_message` (A/331 Table 7.41) for MMTP
+  signaling and MA3 messages (packet type 0x2).  ALTA on the MMTP
+  path SHOULD use an MMTP header-extension `ext_type` (value from
+  the private-use range until formally allocated) with X-bit
+  kept at 0 so A/331 receivers continue to parse `payload_length`
+  for asset packets (type 0x00 MPU, type 0x03 repair) which fall
+  OUTSIDE the A3SA signed region.
+
+A given packet is either an LCT packet or an MMTP packet — the
+two envelopes never coexist on the same packet.  A deployment
+that delivers both an ALC/LCT signaling carousel (TSI = 0 per
+A/331) and MMTP media packets on the same multicast address will
+authenticate each wire layer with its own envelope.  Receivers
+dispatch on the wire framing, not on a unified ASID.
+
+Sender and receiver implementations SHOULD be carrier-aware and
+MUST NOT assume a single envelope covers both paths.  The ALTA
+signer core (hash-chain construction, MAC derivation, Ed25519
+signature anchor) is identical across envelopes; only the
+placement of the authenticator bytes on the wire differs.
 
 On MoQ unicast, end-to-end content authentication MAY be provided
 by Secure Objects which provides object-level encryption and
