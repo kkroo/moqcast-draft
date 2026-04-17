@@ -419,6 +419,8 @@ within a QUIC datagram."  The same constraint applies to multicast
 UDP datagrams.  MMTP [I-D.bouazizi-mmtp] fragments media into
 MTU-sized packets natively per Section 4.1.1.  This is not a design
 choice — it is a physical constraint of datagram-based delivery.
+For CMAF sources, this fragmentation realizes the Chunk-to-Object
+mapping of [I-D.wilaw-moq-cmafpackaging].
 
 No additional multicast framing, encapsulation, or header format is
 needed.  The MMTP packet format is defined in [I-D.ramadan-moq-mmt]
@@ -605,6 +607,11 @@ registration.
            Law, W., "CMSF: A CMAF Compliant Implementation of
            MOQT Streaming Format", draft-ietf-moq-cmsf
            (work in progress).
+
+[I-D.wilaw-moq-cmafpackaging]
+           Law, W., "CMAF Packaging for Media over QUIC",
+           draft-wilaw-moq-cmafpackaging-01 (work in progress),
+           April 2026.
 
 [ISO.23008-1]
            ISO, "Information technology - High efficiency coding and
