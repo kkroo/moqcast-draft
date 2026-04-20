@@ -502,6 +502,46 @@ number of source symbols).
 For Reed-Solomon, repair symbols are generated per [RFC5510] using
 the Vandermonde matrix construction.
 
+### 7.3. Sub-Blocks and ssbg_mode
+
+Per ISO 23008-1 Section C.5, the FEC block structure is described
+by the Source Symbol Block Group mode (ssbg_mode).
+
+**ssbg_mode0** (RECOMMENDED for MMTP): One MMTP packet = one source
+symbol.  Each MoQ object or multicast UDP datagram carries exactly
+one FEC symbol of size T bytes.  SBN = floor(SS_ID / K), ESI =
+SS_ID % K.  This is the natural model for MMTP because packets are
+sized to fit in UDP datagrams and no fragmentation or reassembly is
+needed at the FEC layer.
+
+**Sub-blocks**: When a single source block produces a large number
+of source symbols, the FEC encoder MAY divide the block into Z
+sub-blocks per the RFC 6330 Z parameter.  Sub-block boundaries are
+signaled in the AL-FEC signaling message OTI (Section 5.1).  The
+SSB_length field in the Repair FEC Payload ID (Section 7.1) carries
+the number of source symbols per sub-block (K_sub <= K).
+
+When sub-blocks are used:
+
+1. The block recovery timeout MAY be computed per sub-block:
+   `timeout = K_sub * interleaveDepth_ms * safetyFactor` instead
+   of the full-block timeout `K * interleaveDepth_ms * safetyFactor`.
+   This enables faster partial recovery at the cost of higher repair
+   overhead (P repair symbols per sub-block instead of per block).
+
+2. The receiver tracks source symbol arrivals per sub-block (keyed
+   by SBN + sub-block index) and can emit recovered data as soon as
+   each sub-block completes, without waiting for the full block.
+
+3. SSB_length in the repair object header (Section 7.1) indicates
+   the sub-block size.  Receivers MUST use SSB_length (not K from
+   the catalog) for per-sub-block recovery when SSB_length < K.
+
+Publishers using MMTP packaging SHOULD use ssbg_mode0 without
+sub-blocks.  Sub-blocks are primarily useful for large-K
+configurations (K >= 64) where full-block recovery latency exceeds
+acceptable limits.
+
 ## 8. Block and Group Alignment
 
 ### 8.1. Single-Group Blocks (Interleave Depth = 1)
@@ -594,6 +634,199 @@ interleaveDepth_ms so that each segment boundary aligns with a FEC
 block boundary.  This enables CDN relays to perform FEC recovery at
 the segment level before forwarding to FEC-unaware clients.
 
+### 8.5. Clock-Synchronized Block Identifiers
+
+When multiple encoders share an FEC block namespace (hot standby
+failover, simulcast bitrate tiers, or auxiliary streams), the Source
+Block Number (SBN) MUST be derived from a shared wall-clock reference
+rather than an encoder-local sequential counter.  This ensures that
+any encoder producing source symbols for the same content generates
+identical block boundaries without direct inter-encoder signaling.
+
+The SBN is derived from UTC wall-clock time as follows:
+
+```
+block_duration_ms = K * GOP_duration_ms * D
+SBN = floor((ntp_time_ms - epoch_ms) / block_duration_ms)
+```
+
+Where:
+
+- **ntp_time_ms**: Current UTC time in milliseconds (NTP epoch)
+- **epoch_ms**: Shared session epoch, signaled in the MoQ catalog
+  or ISO 23008-1 AL-FEC signaling message
+- **block_duration_ms**: Wall-clock span of one FEC source block
+- **K**, **D**, **GOP_duration_ms**: As defined in Section 8.3
+
+The corresponding Source FEC Payload ID (SS_ID per ISO 23008-1
+Section C.5.2) is:
+
+```
+SS_ID = SBN * K + ESI
+```
+
+This remains decoupled from the MMTP packet_sequence_number (PSN),
+which may restart on encoder failover.  The 4-byte Source FEC Payload
+ID appended to each MMTP source packet carries the SS_ID, enabling
+receivers to correctly route symbols to FEC blocks regardless of
+which encoder produced them.
+
+The epoch MUST be identical across all encoders sharing the namespace.
+It MAY be derived from the MoQ catalog session start time or signaled
+explicitly via a new `fecEpoch` field in the catalog FEC configuration:
+
+```json
+{
+  "fec": {
+    "sourceSymbols": 32,
+    "repairSymbols": 8,
+    "interleaveDepth": 4000,
+    "fecEpoch": 1713052800000
+  }
+}
+```
+
+Receivers MUST NOT assume that SS_ID values are contiguous across
+encoder transitions.  A hot standby encoder joining at time T produces
+SBN = floor((T - epoch) / block_duration_ms), which may skip block
+numbers if the standby was offline.  Receivers SHOULD treat each
+(SBN, ESI) independently and not require sequential SBN progression.
+
+### 8.6. Source FEC Payload ID and ATSC 3.0 Signed Region
+
+The 4-byte Source FEC Payload ID (SS_ID) is appended at the END of
+MMTP source packet payloads, outside the base MMTP header.  Per
+ATSC A/360 Section 5.2.2.5, the ATSC 3.0 Signed Application (A3SA)
+signing mechanism covers signaling messages and MA3 messages
+(packet type 0x2) but excludes asset packets (type 0x00 MPU and
+type 0x03 repair).
+
+To enable integrity verification of the Source FEC Payload ID within
+the A3SA signed region:
+
+1. The SS_ID SHOULD be carried redundantly in the MMT Hint Track
+   sample (`MMTHSampleATSC3.source_fec_payload_id` per ISO 23008-1).
+   Hint samples are delivered within the same MMTP packet_id as
+   their associated MFU data and fall within the A3SA signed region.
+
+2. Alternatively, the MMTP header `packet_counter` field (C bit = 1)
+   MAY be set equal to SS_ID.  The packet_counter resides within the
+   base MMTP header, which is always present in the signed packet.
+
+3. Receivers operating in A3SA-verified mode SHOULD derive the FEC
+   block assignment from the signed hint track or packet_counter
+   rather than the trailing Source FEC Payload ID.
+
+For MoQ-only receivers (no A3SA verification), the trailing 4-byte
+Source FEC Payload ID remains the canonical block identifier.  QUIC
+transport encryption provides equivalent integrity protection.
+
+### 8.7. Unequal Error Protection for Keyframes
+
+Keyframes (Random Access Points) are disproportionately important:
+losing a single keyframe fragment renders all dependent P-frames
+undecodable.  When keyframes span multiple FEC blocks (e.g.,
+16 fragments across 8 blocks with K=4), any single block failure
+prevents keyframe assembly.
+
+Encoders MAY provide Unequal Error Protection (UEP) per RFC 6363
+Section 6 using one of these strategies:
+
+1. **Large-K blocks** (RECOMMENDED): Use K >= 32 so that keyframe
+   fragments fit within 1-2 FEC blocks.  With P/K >= 25%, a single
+   block can tolerate burst loss of up to P symbols.  This is the
+   simplest approach and requires no receiver-side changes.
+
+2. **Keyframe FEC overlay**: A SECOND FEC encoder covers only
+   keyframe fragments with higher redundancy.  Repair symbols are
+   published on a separate MoQ track (e.g., `video/keyframe-repair`).
+   The catalog signals the overlay via a second `fec` entry:
+
+   ```json
+   {
+     "fec": {
+       "sourceSymbols": 4,
+       "repairSymbols": 2,
+       "repairTrack": "video/repair"
+     },
+     "fecOverlay": {
+       "sourceSymbols": 16,
+       "repairSymbols": 8,
+       "repairTrack": "video/keyframe-repair",
+       "scope": "keyframe"
+     }
+   }
+   ```
+
+   Receivers subscribe to both repair tracks.  The base FEC recovers
+   P-frame losses with low overhead.  The overlay FEC provides 50%
+   redundancy for keyframe fragments across a wider block.
+
+3. **Per-block adaptive P**: The encoder adjusts P per block based
+   on the block's content.  Blocks containing keyframe fragments
+   (identified by rapFlag) receive more repair symbols than blocks
+   containing only P-frames.  SSB_length in the repair header
+   (Section 7.1) signals the per-block K; the receiver uses it to
+   determine the expected repair count.
+
+Strategy 1 is sufficient for most deployments.  Strategy 2 enables
+low-latency P-frame delivery (small K) with high-reliability
+keyframe recovery (large K overlay).  Strategy 3 requires encoder
+awareness of frame types during FEC block formation.
+
+### 8.8. Keyframe Fragment Alignment with FEC Blocks
+
+Keyframes (IDR/IRAP) produce N MFU fragments where N varies per
+scene (typically 8-30 for HD, 30-100 for 4K).  With interleave
+depth D, consecutive MMTP packets interleave across D blocks:
+
+```
+Keyframe fragments: KF0 KF1 KF2 KF3 KF4 KF5 KF6 KF7 ...
+With D=2:           B0  B1  B0  B1  B0  B1  B0  B1
+```
+
+Each block receives N/D keyframe fragments.  The keyframe's MFU
+cannot be reassembled until ALL D blocks containing its fragments
+are recovered.  This creates a reliability dependency:
+
+```
+P(keyframe recovered) = P(block recovered) ^ D
+```
+
+With 99% per-block recovery and D=4: P(keyframe) = 0.99^4 = 96%.
+With D=1 (no interleaving): P(keyframe) = 99%.
+
+**Interleaving tradeoff for keyframes:**
+
+| Depth D | Burst protection | Keyframe reliability (99% block) |
+|---------|------------------|----------------------------------|
+| D=1     | None             | 99% (1 block)                    |
+| D=2     | 2-packet burst   | 98% (2 blocks)                   |
+| D=4     | 4-packet burst   | 96% (4 blocks)                   |
+| D=8     | 8-packet burst   | 92% (8 blocks)                   |
+
+**CMAF segment alignment**: With 1 FEC block = 1 CMAF segment,
+the keyframe spans D segments.  MSE SourceBuffer receives fragments
+across multiple `appendBuffer()` calls.  The MFU reassembler
+(ISO 23008-1 §8.3.2) must collect all D blocks' fragments before
+emitting the keyframe AU to the CMAF assembler.
+
+Encoders SHOULD choose K and D such that:
+
+1. `K >= N_max / D` where N_max is the maximum keyframe fragments
+   expected for the configured resolution and codec.
+2. The combined constraint `K * D * frameDuration_ms` (block span)
+   does not exceed the target latency budget.
+3. For CMAF compatibility: `interleaveDepth_ms` equals the target
+   CMAF segment duration so each segment is FEC-coherent.
+
+When `D=1` and `K >= N_max`: all keyframe fragments are in a single
+FEC block and a single CMAF segment.  This is the most reliable
+configuration for keyframe delivery but provides no burst loss
+interleaving.  Use the keyframe FEC overlay (Section 8.7 Strategy 2)
+to combine burst protection (small K, large D for P-frames) with
+keyframe reliability (large K, D=1 overlay for keyframes).
+
 ## 9. Interleaving
 
 Interleaving spreads source symbols across time to protect against
@@ -627,6 +860,81 @@ Typical values:
 | Low-latency live | 1000-2000 | 1-2 | 1-2s |
 | Broadcast | 4000 | 4 | 4s |
 | ATSC 3.0 default | 8000 | 8 | 8s |
+
+### 9.1. Object-Level FEC for High-Resolution Content
+
+Per-packet FEC (ssbg_mode0) ties the FEC block size K to network
+latency: K source symbols must be accumulated before recovery can
+begin.  For high-resolution codecs (4K AV1, 8K HEVC) where a single
+keyframe may produce 100-600 MFU fragments, per-packet FEC requires
+impractically large K values (K >= 100) with multi-second block spans.
+
+**Object-level FEC** eliminates this limitation by treating each
+semantic media object (keyframe, CMAF segment, GOP) as a single
+FEC source block:
+
+```
+Per-packet FEC (ssbg_mode0):
+  1 MMTP packet = 1 FEC symbol
+  K = number of packets per block
+  Keyframe (200KB) = 150 symbols → K=150, block span = 20s ❌
+
+Object-level FEC:
+  1 MoQ Group = 1 FEC source block
+  Source objects = encoding symbols OF the group payload
+  Keyframe (200KB) → K=10 symbols of 20KB each → block span = 0 ❌ 
+  (symbols sent concurrently, not sequentially)
+```
+
+In object-level FEC, the encoder:
+
+1. Collects the complete keyframe (or CMAF segment) payload
+2. Applies RaptorQ to the payload as a single transfer object
+   (transfer_length = keyframe size, T = payload / K)
+3. Publishes K source objects and P repair objects to the MoQ track
+4. Each MoQ object within the Group carries one encoding symbol
+
+The receiver:
+
+1. Collects MoQ objects as they arrive (source + repair)
+2. When >= K objects received for a Group: decode the full payload
+3. Emit the recovered keyframe to the CMAF assembler
+
+This maps directly to MoQ's (Group, Object) model:
+
+```json
+{
+  "fec": {
+    "mode": "object",
+    "sourceSymbols": 10,
+    "repairSymbols": 5,
+    "repairTrack": "video/repair"
+  }
+}
+```
+
+With `mode: "object"`: the Group payload is the FEC transfer object.
+Source symbols are the first K objects in the Group.  Repair symbols
+are published on the repair track with the same Group ID.  The
+receiver needs any K objects out of (K + P) to recover the Group.
+
+**Comparison:**
+
+| Property | Per-packet (ssbg_mode0) | Object-level |
+|----------|------------------------|--------------|
+| FEC unit | MMTP packet (T bytes) | MoQ Group (variable) |
+| Block span | K × D × frameDuration | 0 (concurrent) |
+| Keyframe reliability | P(block)^D | P(block)^1 |
+| Interleaving | Packet-level (depth D) | Group-level (natural) |
+| CMAF alignment | 1 block = 1 segment | 1 group = 1 segment |
+| Latency | K-dependent | Object delivery time |
+| Best for | Low-latency HD | High-res 4K/8K |
+
+Publishers MAY use per-packet FEC for P-frames (low latency) and
+object-level FEC for keyframes (high reliability).  This is a
+specialization of the keyframe FEC overlay (Section 8.7 Strategy 2)
+where the overlay uses object-level FEC instead of per-packet FEC
+with large K.
 
 ## 10. Priority and Congestion
 
@@ -922,6 +1230,35 @@ apply:
    to detect corrupted recovery.  If decoded source data fails
    integrity checks, receivers SHOULD request retransmission via
    unicast fallback.
+
+### 14.5. ATSC 3.0 Signed Region (A3SA) Considerations
+
+When operating within the ATSC 3.0 ecosystem, content authenticity
+is enforced via the A3SA (ATSC 3.0 Signed Application) framework
+defined in ATSC A/360 Section 5.2.2.5.  The `signed_mmt_message`
+structure (A/331 Table 7.41) provides digital signatures over MMTP
+signaling and MA3 messages.
+
+The Source FEC Payload ID (4-byte SS_ID appended to MMTP source
+packets) falls OUTSIDE the A3SA signed region, as A3SA signing
+excludes asset packets (MMTP type 0x00 and 0x03).  Implementations
+that require authenticated FEC block assignment MUST use one of the
+mechanisms described in Section 8.6:
+
+- Hint track redundancy (`MMTHSampleATSC3.source_fec_payload_id`)
+- MMTP `packet_counter` field (C bit = 1, counter = SS_ID)
+
+An attacker who can modify the trailing Source FEC Payload ID without
+detection could redirect source symbols to incorrect FEC blocks,
+causing recovery failures or corrupted output.  On multicast networks
+without A3SA verification, receivers SHOULD cross-check the SS_ID
+against the MMTP packet_sequence_number to detect obvious tampering
+(e.g., SS_ID values that imply impossible block assignments given the
+known K and interleave depth).
+
+For MoQ transport (QUIC), the TLS encryption and AEAD integrity
+protection on QUIC packets provides equivalent protection of the
+Source FEC Payload ID without requiring A3SA.
 
 ## 15. IANA Considerations
 
