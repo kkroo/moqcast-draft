@@ -242,6 +242,60 @@ in [I-D.wilaw-moq-cmafpackaging].  MoQ Group numbers MUST be
 media-time-aligned across all tracks of a switching set so that
 subscribers can switch at group boundaries without discontinuity.
 
+#### 4.4.1. Group Number Formula
+
+For interoperability across senders, relays, and subscribers, the
+group number for a given media time within a switching set is
+computed as:
+
+      group_number = base + floor(ticks / group_duration_ticks)
+
+where:
+
+- `ticks` is the presentation timestamp expressed in the catalog's
+  media `timescale` (Hz), as a non-negative integer.  Values <= 0
+  MUST clamp to `base` (handles encoder start-up and epoch reseeds).
+- `group_duration_ticks` is `group_duration_seconds * timescale`,
+  expressed as a positive integer; the catalog SHOULD publish this
+  value directly as `group_duration_ticks` to avoid float rounding.
+- `base` is a non-negative integer offset assigned to the switching
+  set, defaulting to 0 unless the catalog specifies otherwise.
+
+Integer math is normative.  Implementations MAY accept seconds-form
+inputs at API boundaries, but the seconds-to-ticks conversion MUST
+preserve the integer formula above (e.g. via `ticks =
+round(seconds * timescale)`); a float-domain `floor` is RECOMMENDED
+to apply a tolerance (e.g. `1e-9` seconds) to prevent ULP-class
+boundary mis-bucketing.
+
+The same `(ticks, timescale, group_duration_ticks)` triple, fed
+through this formula, MUST produce the same group number in every
+implementation that participates in the switching set.
+
+#### 4.4.2. Reference Test Vectors
+
+A normative cross-language test fixture covering boundary, overflow,
+and drift cases is published as part of the libmmt reference
+implementation at `packages/container/test-vectors/align.json`, and
+is loaded unchanged by the Go sender [GroupAligner], the Rust relay
+[moqtail-abr], and the TypeScript subscriber libmmt.  Implementers
+SHOULD load this fixture in their own test suites to establish
+machine-checkable cross-language agreement.
+
+#### 4.4.3. Reference Implementations
+
+- Go (sender): `Blockcast/multicast cmd/caddy/sender/group_align.go`
+  (see [GroupAligner]).
+- Rust (relay): `moqtail/moqtail apps/relay/src/server/abr.rs`
+  (see [moqtail-abr]; experimental branch, anchor on commit SHA).
+- TypeScript (subscriber): `Blockcast/libmmt
+  packages/container/src/align.ts`, exporting `groupIdForTicks` and
+  `groupIdFor` (a deprecated seconds-form wrapper retained for
+  migration).
+
+Formula changes are normative: any update MUST update the test
+fixture and all reference implementations in the same release.
+
 ### 4.5. Init Segment Signaling
 
 Publishers MAY signal MPU metadata (mmpu/moov) either inline as
@@ -756,6 +810,15 @@ This document also requests registration of MoQ message type
     Law, W., "CMAF Packaging for Media over QUIC",
     draft-wilaw-moq-cmafpackaging-01 (work in progress),
     April 2026.
+
+[GroupAligner]
+    "MOQT group time-alignment across ABR ladders (Caddy
+    sender)", source code,
+    <https://github.com/Blockcast/multicast/blob/main/cmd/caddy/sender/group_align.go>.
+
+[moqtail-abr]
+    "Server-side ABR group alignment (relay)", source code,
+    <https://github.com/moqtail/moqtail/blob/experimental/server-side-abr/apps/relay/src/server/abr.rs>.
 
 ## Appendix A. Bandwidth Comparison
 
