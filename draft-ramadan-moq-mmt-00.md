@@ -296,6 +296,53 @@ machine-checkable cross-language agreement.
 Formula changes are normative: any update MUST update the test
 fixture and all reference implementations in the same release.
 
+#### 4.4.4. Catalog Signaling of Group Duration
+
+For a subscriber to apply the formula in Section 4.4.1, the catalog
+MUST publish the group duration to each track in the switching set.
+This document defines a single per-track field:
+
+      groupDurationMs (REQUIRED, unsigned integer, milliseconds)
+
+Rationale for the chosen unit:
+
+- Integer milliseconds is unambiguous across catalog encodings (JSON,
+  CBOR) and avoids the float-vs-integer tension that motivated the
+  integer-ticks form of the formula in the first place.
+- The publisher's encoder configuration already operates in
+  milliseconds (cf. `groupDuration: Time.Milli` in moq-lib's hang
+  encoder).  Catalog and encoder agree without conversion.
+- ABR ladders typically pick group durations in whole-millisecond
+  multiples (100, 1000, 2000, 4000); sub-millisecond resolution has
+  no demonstrated use case.
+
+The subscriber converts to ticks using the timescale appropriate to
+the track's container kind:
+
+| Container | Timescale source |
+|-----------|------------------|
+| `cmaf`    | `container.timescale` (per-track field) |
+| `mmtp`    | 90 000 Hz (MMTP video; per ISO 23008-1 §A.4) |
+| `loc`     | 1 000 000 (microseconds, per draft-ietf-moq-loc) |
+| `legacy`  | 1 000 000 (microseconds, per [I-D.ietf-moq-transport]) |
+
+Conversion is `group_duration_ticks = groupDurationMs * timescale / 1000`.
+The catalog publisher MUST choose a `groupDurationMs` such that the
+resulting tick count is exact (i.e. `(groupDurationMs * timescale) %
+1000 == 0`).  If this cannot be satisfied, the catalog MUST publish
+ticks directly via the optional override field:
+
+      groupDurationTicks (OPTIONAL, unsigned integer)
+
+If both `groupDurationMs` and `groupDurationTicks` are present,
+`groupDurationTicks` wins.  This override exists solely to support
+exotic timescales (e.g. 90 000 Hz with a 333 ms group).
+
+Switching-set agreement: every track in the same switching set MUST
+publish the same `groupDurationMs` (or equivalent
+`groupDurationTicks`).  Subscribers MAY validate this at catalog
+load and refuse to subscribe on disagreement.
+
 ### 4.5. Init Segment Signaling
 
 Publishers MAY signal MPU metadata (mmpu/moov) either inline as
