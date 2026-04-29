@@ -343,7 +343,7 @@ the track's container kind:
 | Container | Timescale source |
 |-----------|------------------|
 | `cmaf`    | `container.timescale` (per-track field, REQUIRED). |
-| `mmtp`    | Per-track field; 90 000 Hz is RECOMMENDED for video and 48 000 Hz for audio when no value is published, but tracks SHOULD publish an explicit timescale. ISO 23008-1 §A.4 lists 90 000 Hz only as a video convention; mixed-rate audio MMTP tracks MUST NOT assume the video default. |
+| `mmtp`    | Per-track field; mmtp tracks MUST publish an explicit timescale.  ISO 23008-1 §A.4 lists 90 000 Hz only as a video convention; the catalog does not infer audio timescales, so leaving the field unset is a catalog error. |
 | `loc`     | Per-track `Timescale` property, per draft-ietf-moq-loc; defaults to 1 000 000 (microseconds) only when the property is absent. |
 | `legacy`  | 1 000 000 (microseconds).  This is the encoding convention applied by current moq-transport implementations to opaque object payloads; it is fixed by this document and does NOT derive from [I-D.ietf-moq-transport]. |
 
