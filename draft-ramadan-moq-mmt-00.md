@@ -118,6 +118,12 @@ CMAF packaging (CMSF/CARP) is RECOMMENDED when:
 
 ## 2. Terminology
 
+The key words "**MUST**", "**MUST NOT**", "**REQUIRED**", "**SHALL**",
+"**SHALL NOT**", "**SHOULD**", "**SHOULD NOT**", "**RECOMMENDED**",
+"**NOT RECOMMENDED**", "**MAY**", and "**OPTIONAL**" in this document
+are to be interpreted as described in BCP 14 [RFC2119] [RFC8174] when,
+and only when, they appear in all capitals, as shown here.
+
 **MMTP**: MMT Protocol - the packet layer of MMT (ISO 23008-1 Clause 8)
 
 **MPU**: Media Processing Unit - a self-contained media segment in MMT,
@@ -241,6 +247,134 @@ media (e.g., an ABR ladder), they form a switching set as defined
 in [I-D.wilaw-moq-cmafpackaging].  MoQ Group numbers MUST be
 media-time-aligned across all tracks of a switching set so that
 subscribers can switch at group boundaries without discontinuity.
+
+#### 4.4.1. Group Number Formula
+
+For interoperability across senders, relays, and subscribers, the
+group number for a given media time within a switching set is
+computed as:
+
+      group_number = base + floor(ticks / group_duration_ticks)
+
+where:
+
+- `ticks` is the presentation timestamp expressed in the catalog's
+  media `timescale` (Hz), as a signed integer.  Values less than or
+  equal to zero (which can occur during encoder start-up, on B-frame
+  reorder, or after an epoch reseed) MUST clamp to `base`.
+- `group_duration_ticks` is the per-track group duration expressed
+  in the same `timescale`, as a positive integer.  The catalog
+  signals it via §4.4.4; conversion from the integer-millisecond
+  form is exact by construction (the catalog publisher rejects
+  non-exact pairs and uses the integer-tick override instead).
+- `base` is a non-negative integer offset assigned to the switching
+  set, defaulting to 0 unless the catalog specifies otherwise.
+
+Integer math is normative.  Implementations MAY accept seconds-form
+inputs at API boundaries, but the seconds-to-ticks conversion MUST
+preserve the integer formula above (e.g. via `ticks =
+round(seconds * timescale)`); a float-domain `floor` is RECOMMENDED
+to apply a tolerance (e.g. `1e-9` seconds) to prevent ULP-class
+boundary mis-bucketing.
+
+The same `(ticks, timescale, group_duration_ticks)` triple, fed
+through this formula, MUST produce the same group number in every
+implementation that participates in the switching set.
+
+#### 4.4.2. Reference Test Vectors
+
+A normative cross-language test fixture covering boundary, overflow,
+and drift cases is published as part of the libmmt reference
+implementation at `packages/container/test-vectors/align.json`, and
+is loaded unchanged by the Go sender [GroupAligner], the Rust relay
+[moqtail-abr], and the TypeScript subscriber libmmt.  Implementers
+SHOULD load this fixture in their own test suites to establish
+machine-checkable cross-language agreement.
+
+#### 4.4.3. Reference Implementations
+
+- Go (sender): `Blockcast/multicast cmd/caddy/sender/group_align.go`
+  at commit `695caa14` (see [GroupAligner]).
+- Rust (relay): `moqtail/moqtail apps/relay/src/server/abr.rs` at
+  commit `39accbf4` (see [moqtail-abr]).  Currently lives on the
+  experimental `server-side-abr` branch; the SHA is the durable
+  anchor.
+- TypeScript (subscriber): `Blockcast/libmmt
+  packages/container/src/align.ts`, exporting `groupIdForTicks` as
+  the canonical entry point.
+
+Implementation note: the TypeScript reference also exports a
+seconds-form wrapper (`groupIdFor`) for compatibility with existing
+consumers.  This is non-normative; new code SHOULD use the integer
+entry point.
+
+Reference implementations are pinned by commit SHA in §14 to keep
+URLs stable across branch rewrites.  Formula changes are normative:
+any update MUST update the test fixture and all reference
+implementations in the same release.
+
+#### 4.4.4. Catalog Signaling of Group Duration
+
+For a subscriber to apply the formula in Section 4.4.1, the catalog
+MUST publish the group duration to each track in the switching set.
+This document defines a single per-track field:
+
+      groupDurationMs (REQUIRED, unsigned integer, milliseconds)
+
+Rationale for the chosen unit:
+
+- Integer milliseconds is unambiguous across catalog encodings (JSON,
+  CBOR) and avoids the float-vs-integer tension that motivated the
+  integer-ticks form of the formula in the first place.
+- Most segment-aligned ABR ladders deployed today pick group
+  durations in whole-millisecond multiples (e.g. 100, 1000, 2000,
+  4000), and the publisher-side configuration in current
+  implementations already operates in milliseconds.  Catalog and
+  encoder agree without conversion in the common case.
+- The primary use case for the integer-tick override (below) is
+  per-frame group durations at non-integer-millisecond cadences
+  (e.g. 1/30 s = 33.333… ms, 1/60 s = 16.666… ms), which cannot be
+  expressed in integer milliseconds at all and which low-latency
+  MoQ deployments routinely need.
+
+The subscriber converts to ticks using the timescale appropriate to
+the track's container kind:
+
+| Container | Timescale source |
+|-----------|------------------|
+| `cmaf`    | `container.timescale` (per-track field, REQUIRED). |
+| `mmtp`    | Per-track field; mmtp tracks MUST publish an explicit timescale.  ISO 23008-1 §A.4 lists 90 000 Hz only as a video convention; the catalog does not infer audio timescales, so leaving the field unset is a catalog error. |
+| `loc`     | Per-track `Timescale` property, per draft-ietf-moq-loc; defaults to 1 000 000 (microseconds) only when the property is absent. |
+| `legacy`  | 1 000 000 (microseconds).  This is the encoding convention applied by current moq-transport implementations to opaque object payloads; it is fixed by this document and does NOT derive from [I-D.ietf-moq-transport]. |
+
+Conversion is `group_duration_ticks = groupDurationMs * timescale / 1000`.
+The catalog publisher MUST choose a `groupDurationMs` such that the
+resulting tick count is exact (i.e. `(groupDurationMs * timescale) %
+1000 == 0`).  If this cannot be satisfied, the catalog MUST publish
+ticks directly via the optional override field:
+
+      groupDurationTicks (OPTIONAL, unsigned integer)
+
+If both `groupDurationMs` and `groupDurationTicks` are present,
+`groupDurationTicks` wins.  Cases where the override is required
+include:
+
+- Per-frame group durations at a 30 fps cadence (`1/30 s ≈ 33.333 ms`)
+  on any timescale: expressing this in integer ms is impossible, so
+  publishers set `groupDurationTicks: timescale / 30` directly
+  (e.g. `3000` at 90 000 Hz, `1500` at 45 000 Hz).
+- Audio sample-rate timescales not divisible by 1000 Hz, such as
+  44 100 Hz: `333 ms × 44 100 / 1000 = 14 685.3` is non-integer; a
+  publisher selecting a 333 ms audio group MUST publish ticks.
+
+Switching-set agreement: every track in the same switching set MUST
+publish the same effective `group_duration_ticks` (after timescale
+conversion).  Subscribers SHOULD validate this at catalog load and,
+on disagreement, SHOULD reject the catalog and signal a
+catalog-validation error to the application.  Subscribers that
+proceed despite disagreement are non-conformant for switching across
+the affected tracks; ABR transitions on such tracks will produce
+group-boundary discontinuities.
 
 ### 4.5. Init Segment Signaling
 
@@ -756,6 +890,16 @@ This document also requests registration of MoQ message type
     Law, W., "CMAF Packaging for Media over QUIC",
     draft-wilaw-moq-cmafpackaging-01 (work in progress),
     April 2026.
+
+[GroupAligner]
+    "MOQT group time-alignment across ABR ladders (Caddy
+    sender)", commit 695caa14, source code,
+    <https://github.com/Blockcast/multicast/blob/695caa14/cmd/caddy/sender/group_align.go>.
+
+[moqtail-abr]
+    "Server-side ABR group alignment (relay)", commit 39accbf4,
+    source code,
+    <https://github.com/moqtail/moqtail/blob/39accbf4/apps/relay/src/server/abr.rs>.
 
 ## Appendix A. Bandwidth Comparison
 
